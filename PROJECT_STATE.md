@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-08-12 (Sprint 1 complete)
+Last updated: 2026-08-12 (Sprint 2 complete)
 
 ## Current architecture
 
@@ -12,6 +12,9 @@ ai-quality-gate/
 └── backend/
     ├── pyproject.toml         # uv-managed project, deps + ruff + pytest config
     ├── README.md
+    ├── datasets/               # versioned golden dataset JSON files (data, not code)
+    │   ├── customer_support_bot.v1.0.0.json           # 22-case seed golden dataset
+    │   └── customer_support_bot.v1.0.0.fixtures.json  # deterministic fixture responses
     └── app/
         ├── main.py             # FastAPI app factory (create_app), wires everything
         ├── domain/             # pure Pydantic domain models, no framework deps
@@ -20,22 +23,32 @@ ai-quality-gate/
         │   ├── evaluation_run.py   # EvaluationRun
         │   ├── metric_result.py    # MetricResult
         │   ├── case_result.py      # CaseResult
-        │   └── gate_decision.py    # GateDecision
+        │   ├── gate_decision.py    # GateDecision
+        │   └── golden_dataset.py   # GoldenDataset (name/version/created_at/description/cases) + semver_key
+        ├── evaluation/          # the internal evaluation interface + deterministic plugin
+        │   ├── base.py              # Evaluator protocol (applies_to + evaluate -> MetricResult)
+        │   ├── types.py             # EvaluationInput, FixtureResponse
+        │   ├── deterministic.py     # 8 deterministic evaluators + DEFAULT_EVALUATORS
+        │   └── runner.py            # EvaluationRunner: dataset + fixtures -> EvaluationRun + CaseResults
         ├── repositories/       # storage abstraction
         │   ├── base.py             # Repository protocol
-        │   └── in_memory.py        # InMemoryRepository[T] (dict-backed, process-local)
+        │   └── in_memory.py        # InMemoryRepository[T], InMemoryCaseResultStore
         ├── services/           # application/orchestration layer
-        │   └── status_service.py   # assembles /api/v1/status payload
+        │   ├── status_service.py     # assembles /api/v1/status payload
+        │   ├── dataset_service.py    # load/validate/list/get datasets + fixtures from disk
+        │   └── evaluation_service.py # orchestrates dataset -> runner -> repositories
         ├── api/                 # HTTP layer (FastAPI routers)
         │   ├── deps.py              # FastAPI dependency providers
         │   ├── health.py            # GET /health
-        │   └── status.py            # GET /api/v1/status
+        │   ├── status.py            # GET /api/v1/status
+        │   ├── datasets.py          # GET /api/v1/datasets, GET /api/v1/datasets/{name}/{version}
+        │   └── evaluations.py       # POST /api/v1/evaluations/runs, GET /api/v1/evaluations/runs/{id}
         └── core/                 # cross-cutting concerns
-            ├── config.py            # Settings (env-var driven, AQG_ prefix)
+            ├── config.py            # Settings (env-var driven, AQG_ prefix; adds dataset_dir)
             ├── context.py           # request-id ContextVar
             ├── logging.py           # JSON log formatter, configure_logging()
             ├── middleware.py        # RequestIDMiddleware (trace ID + timing)
-            └── exceptions.py        # AppError/NotFoundError + exception handlers
+            └── exceptions.py        # AppError family + exception handlers
 ```
 
 **Layering principle in effect:** domain models have zero framework
@@ -46,72 +59,128 @@ no repository interface per aggregate, no CQRS, no DI container. Just enough
 seams to swap in-memory storage for a real database later without touching
 domain or API code.
 
-**Plugin boundary (not yet built, but the reason for this layering):**
-Evaluation frameworks (DeepEval, RAGAS, OpenAI Evals, LangChain, Phoenix) will
-sit behind an internal evaluation interface and only ever produce
-`MetricResult` objects. The Quality Gate — not any framework — owns
-orchestration, thresholds, baseline comparison, and the `GateDecision`
-(PASS/WARN/BLOCK). Nothing in Sprint 1 violates this boundary because no
-framework integrations exist yet.
+**Plugin boundary (now proven, not just planned):** `app/evaluation/base.py`
+defines the `Evaluator` protocol — `applies_to(case)` + `evaluate(input) ->
+MetricResult`. The 8 deterministic evaluators in `app/evaluation/deterministic.py`
+are the first (and so far only) implementation of that protocol. They know
+nothing about HTTP, datasets-on-disk, or release policy — they take an
+`EvaluationInput` and return a normalized `MetricResult`. `EvaluationRunner`
+composes evaluators against a dataset's cases; it does **not** compute a
+PASS/WARN/BLOCK decision — that remains future work for the Gate's policy
+layer. When DeepEval/RAGAS/OpenAI Evals/Phoenix are integrated in a later
+sprint, they will implement this same `Evaluator` protocol side-by-side with
+the deterministic ones, proving the plugin boundary rather than just
+asserting it.
 
-## Completed capabilities (Sprint 1)
+## Completed capabilities (Sprint 1 + Sprint 2)
 
+**Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
-  `CaseResult`, `GateDecision` — all Pydantic v2 models with field
-  validation (non-blank required fields, non-negative numerics, finite
-  scores, timestamp ordering, enum-constrained status fields).
-- FastAPI application factory (`app.main.create_app`) with:
-  - `GET /health` — liveness check.
-  - `GET /api/v1/status` — app name/version/environment/uptime + in-memory
-    repository counts.
-- Configuration via environment variables (`AQG_` prefix) using
-  `pydantic-settings`.
-- Structured JSON logging (`app.core.logging.configure_logging`) — every log
-  line is a single JSON object with timestamp/level/logger/message and the
-  active request ID when available.
-- Request/trace ID middleware (`RequestIDMiddleware`) — generates or
-  propagates `X-Request-ID`, stores it in a `ContextVar` so logs and error
-  bodies can include it, echoes it back on the response header.
-- Application exception handling: `AppError`/`NotFoundError` base classes,
-  handlers for `AppError`, `RequestValidationError`, and unhandled
-  exceptions, all returning a consistent `{"error": {code, message,
-  request_id}}` body. Unhandled exceptions are logged with full traceback
-  server-side but never leak details to the client.
-- Domain/service/repository separation: `InMemoryRepository[T]` generic
-  repository, `StatusService` as the one example service composing
-  repositories + settings.
-- PyTest suite: 37 tests — domain validation unit tests (one file per
-  domain model + repository), API tests for `/health`, `/api/v1/status`,
-  and the exception-handling behavior.
-- Ruff configured and passing (lint + format check clean).
+  `CaseResult`, `GateDecision` — Pydantic v2 models with field validation.
+- FastAPI app factory, `GET /health`, `GET /api/v1/status`.
+- Env-var configuration (`AQG_` prefix, `pydantic-settings`), structured
+  JSON logging, request/trace-ID middleware, centralized `AppError`
+  exception handling with a consistent `{"error": {...}}` body.
+- `InMemoryRepository[T]`, domain/service/repository separation.
+- 37 tests (domain validation + health/status API + error handling).
+
+**Sprint 2 — Golden Dataset and Deterministic Evaluation:**
+- `GoldenDataset` domain model: `name`, semver `version` (validated
+  `X.Y.Z`), `created_at`, `description`, `cases: list[EvaluationCase]`.
+  Rejects empty case lists, duplicate case ids within a dataset, blank
+  name/description, and non-semver versions.
+- Dataset file format: one JSON file per version,
+  `{name}.v{version}.json`; loaded from `backend/datasets/` (configurable
+  via `AQG_DATASET_DIR`). A sibling `{name}.v{version}.fixtures.json` maps
+  case id → a deterministic `FixtureResponse` (response text, retrieved
+  context, latency, tokens, cost) used by the evaluation runner in place of
+  a live model provider (none exists yet).
+- Seed dataset `customer_support_bot` v1.0.0 — **22 cases**: 5 answerable,
+  4 unsupported/out-of-scope, 3 expected-refusal, 3 structured-output
+  (JSON schema), 4 retrieval-grounded, 3 negative/adversarial. **6 cases
+  flagged `critical=true`** spanning every category. Fixtures are crafted
+  so the run has a realistic mix: **15 passing / 7 failing**, with exactly
+  one deliberate failure exercised per evaluator type, and **2 critical
+  failures** (`str-002`: malformed structured output; `neg-001`: a
+  successful prompt-injection leak) to prove critical-case detection works
+  end to end.
+- `DatasetService` (`app/services/dataset_service.py`): `load_all()`,
+  `list_datasets()`, `get_dataset(name, version | "latest")`,
+  `get_fixtures(dataset)`. Malformed JSON or schema-invalid datasets raise
+  `DatasetValidationError` (422) naming the offending file; missing/invalid
+  fixtures raise `FixtureValidationError` (422). `parse_dataset()` is a
+  standalone function usable directly in tests without touching disk.
+- Internal evaluation interface (`app/evaluation/base.py`): `Evaluator`
+  protocol — `applies_to(case) -> bool`, `evaluate(input) -> MetricResult`.
+  Applicability is data-driven from case fields/metadata ("where
+  appropriate"), not hardcoded per category.
+- 8 deterministic evaluators (`app/evaluation/deterministic.py`), all
+  framework=`"deterministic"`:
+  `ExactMatchEvaluator` (normalized match, opt-in via
+  `metadata.match_mode="exact"`), `RequiredPhraseEvaluator`,
+  `ForbiddenPhraseEvaluator`, `JSONSchemaEvaluator` (via `jsonschema`),
+  `ExpectedRefusalEvaluator` (refusal-language detection for
+  REFUSE/UNSUPPORTED cases), `CitationPresenceEvaluator` (retrieval cases
+  must return retrieved context), `LatencyThresholdEvaluator`,
+  `CostThresholdEvaluator` (both with a global default, overridable per
+  case via metadata).
+- `EvaluationRunner` (`app/evaluation/runner.py`): runs a `GoldenDataset`
+  against a `dict[case_id, FixtureResponse]`, applies only the evaluators
+  relevant to each case, produces `CaseResult`s and a completed
+  `EvaluationRun`. Raises `MissingFixtureError` (400) if any case lacks a
+  fixture. `critical_failure` is set exactly when `case.critical and not
+  passed`.
+- `EvaluationService` orchestrates dataset resolution → fixture loading →
+  run → persistence (`EvaluationRun` in `InMemoryRepository`, `CaseResult`s
+  in the new `InMemoryCaseResultStore`, keyed by run id).
+- API endpoints:
+  - `GET /api/v1/datasets` — summary list (name/version/description/
+    created_at/case_count) of every loaded dataset.
+  - `GET /api/v1/datasets/{name}/{version}` — full dataset incl. all
+    cases; `version="latest"` resolves to the newest semver.
+  - `POST /api/v1/evaluations/runs` — body `{dataset_name, dataset_version?}`,
+    runs the deterministic evaluators against the dataset's fixtures,
+    returns a run summary (status, case/passed/failed counts, critical
+    failure case ids).
+  - `GET /api/v1/evaluations/runs/{run_id}` — full run detail including
+    every case's `metric_results`.
+- 116 tests total (79 new in Sprint 2): dataset domain validation,
+  8-evaluator unit tests (`applies_to` + pass/fail per evaluator),
+  runner tests (completion, missing fixture, critical-failure flagging),
+  `DatasetService` tests incl. malformed-JSON/schema-violation rejection
+  via `tmp_path` fixtures, dataset + evaluation API tests, and a dedicated
+  critical-case test module that runs the real seed dataset through the
+  service/runner layer (no HTTP) and asserts on all 6 critical cases by id.
+- Fixed a pre-existing deprecation: `status.HTTP_422_UNPROCESSABLE_ENTITY`
+  → `status.HTTP_422_UNPROCESSABLE_CONTENT` (Starlette rename), applied
+  everywhere in `core/exceptions.py`.
 
 ## Current sprint
 
-Sprint 1 — Foundation and Domain Model: **complete**.
+Sprint 2 — Golden Dataset and Deterministic Evaluation: **complete**.
 
 ## Outstanding work (future sprints, not started)
 
 - Model provider integrations (OpenAI, Gemini/Vertex AI, deterministic test
-  provider) and the internal provider interface.
-- RAG pipeline (LangChain + ChromaDB), retrieval metrics.
-- Evaluation framework plugins (DeepEval, RAGAS, OpenAI Evals) behind the
-  internal evaluation interface — frameworks emit `MetricResult`s only.
-- Evaluation orchestration service that runs an `EvaluationRun` over a
-  golden dataset and produces `CaseResult`s.
-- Release policy engine: thresholds config, critical-case handling,
-  baseline/regression comparison, `GateDecision` computation with audit
-  trail.
-- Golden dataset versioning and loading (currently no dataset storage or
-  file format exists).
+  provider) and the internal provider interface — the evaluation runner
+  currently only consumes pre-recorded fixtures, never calls a live model.
+- RAG pipeline (LangChain + ChromaDB), retrieval metrics beyond the simple
+  citation-presence check.
+- Framework-backed evaluators (DeepEval, RAGAS, OpenAI Evals) implementing
+  the same `Evaluator` protocol as the deterministic ones — groundedness/
+  faithfulness, answer relevancy, context precision/recall.
+- Release policy engine: thresholds config, baseline/regression comparison
+  across runs, `GateDecision` computation (PASS/WARN/BLOCK) with audit
+  trail — `GateDecision` exists as a domain model but nothing computes one
+  yet; Sprint 2 only produces `CaseResult`s and run-level pass/fail counts.
 - JSON/HTML evaluation report generation.
 - Observability integration (Arize Phoenix).
 - Persistent storage (repositories are in-memory only and reset on
   restart — no database yet).
 - React engineering dashboard (frontend does not exist yet).
 - Docker packaging and GitHub Actions CI.
-- API/integration tests beyond health/status once real endpoints exist
-  (e.g., `POST` endpoints for cases/runs — not built yet, so no CRUD API
-  exists beyond the two read-only endpoints above).
+- A `GET /api/v1/evaluations/runs` list endpoint (only "run" and "inspect
+  one run" exist; listing all runs wasn't in Sprint 2's scope).
 
 ## Commands to run the project and tests
 
@@ -137,8 +206,25 @@ uv run ruff format --check .
 uv run ruff format .
 ```
 
-Once running, `GET /health`, `GET /api/v1/status`, and interactive API docs
-at `/docs` (OpenAPI at `/openapi.json`) are available.
+Once running, in addition to Sprint 1's endpoints:
+
+```bash
+# list datasets
+curl http://127.0.0.1:8000/api/v1/datasets
+
+# inspect a dataset (full case list)
+curl http://127.0.0.1:8000/api/v1/datasets/customer_support_bot/latest
+
+# run deterministic evaluation
+curl -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "customer_support_bot"}'
+
+# inspect a run (use the "id" from the response above)
+curl http://127.0.0.1:8000/api/v1/evaluations/runs/<run_id>
+```
+
+Interactive API docs at `/docs` (OpenAPI at `/openapi.json`).
 
 ## Important environment variables
 
@@ -151,5 +237,6 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_ENVIRONMENT` | `development` | Environment label (`development`/`staging`/`production`) |
 | `AQG_LOG_LEVEL` | `INFO` | Root logger level |
 | `AQG_API_V1_PREFIX` | `/api/v1` | Prefix under which v1 routers are mounted |
+| `AQG_DATASET_DIR` | `datasets` | Directory of golden dataset JSON files; relative paths resolve against `backend/` |
 
 Settings are also loadable from a `backend/.env` file (not committed).
