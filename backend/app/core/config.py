@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
     api_v1_prefix: str = "/api/v1"
+    dataset_dir: str = "datasets"
 
 
 @lru_cache

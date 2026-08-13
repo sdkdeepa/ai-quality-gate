@@ -2,6 +2,8 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel
 
+from app.domain.case_result import CaseResult
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -27,3 +29,21 @@ class InMemoryRepository(Generic[T]):
 
     def count(self) -> int:
         return len(self._items)
+
+
+class InMemoryCaseResultStore:
+    """Stores per-case evaluation results keyed by evaluation run id.
+
+    Kept separate from InMemoryRepository[T] because CaseResult has no
+    natural single-entity id of its own — results only make sense as a
+    list scoped to the run that produced them.
+    """
+
+    def __init__(self) -> None:
+        self._results: dict[str, list[CaseResult]] = {}
+
+    def save(self, run_id: str, results: list[CaseResult]) -> None:
+        self._results[run_id] = results
+
+    def get(self, run_id: str) -> list[CaseResult] | None:
+        return self._results.get(run_id)
