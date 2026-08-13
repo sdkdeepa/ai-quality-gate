@@ -157,3 +157,127 @@ lockfile-based reproducibility by default).
 **Trade-off:** Team members must have `uv` installed locally (or use
 `pipx run uv`); this is a minor onboarding step noted in
 `PROJECT_STATE.md`.
+
+## Sprint 2 — Golden Dataset and Deterministic Evaluation
+
+### 8. Evaluators are data-driven ("applies_to"), not category-hardcoded
+
+**Decision:** The `Evaluator` protocol requires both `applies_to(case) ->
+bool` and `evaluate(input) -> MetricResult`. Whether an evaluator runs for
+a given case is decided by inspecting the case's own fields/metadata (e.g.
+`RequiredPhraseEvaluator` applies iff `metadata["required_phrases"]` is
+non-empty; `ExpectedRefusalEvaluator` applies iff `expected_behavior` is
+`REFUSE`/`UNSUPPORTED`) rather than a runner-level `if category ==
+"structured_output": run JSONSchemaEvaluator` dispatch table.
+
+**Reason:** The spec calls for evaluators like exact/normalized match
+"where appropriate" — appropriateness is a property of the individual
+case (does it have an `expected_answer`? a `json_schema`? required
+phrases?), not of a coarse category label. Data-driven applicability lets
+one dataset mix, e.g., a phrase-graded answerable case and an
+exact-match answerable case without a special-cased runner.
+
+**Alternatives considered:** A central registry mapping `category ->
+[evaluator names]` — rejected because it forces every case in a category
+to be graded identically and pushes a policy decision (which evaluators
+matter for this case) out of the dataset author's hands and into runner
+code.
+
+**Trade-off:** Dataset authors must know the metadata keys each evaluator
+looks for (`required_phrases`, `forbidden_phrases`, `json_schema`,
+`match_mode`, `requires_citation`, `max_latency_ms`, `max_cost_usd`,
+`refusal_phrases`) — there's no schema enforcing valid metadata shape
+beyond what each evaluator reads defensively at evaluate-time. Acceptable
+for Sprint 2's scope; a dataset-authoring guide or metadata schema could
+be added later if this becomes error-prone at scale.
+
+### 9. Evaluators never compute pass/fail policy beyond their own metric
+
+**Decision:** Each evaluator returns exactly one `MetricResult` with its
+own `score`/`threshold`/`passed`. `EvaluationRunner` combines them for a
+case via a simple `passed = all(m.passed for m in metric_results)` — no
+weighting, no partial credit across metrics, no evaluator-specific
+override of what "case passed" means.
+
+**Reason:** Keeps the plugin boundary from [[Sprint 1 decision 1]] intact
+one level deeper: not just "frameworks don't own release policy" but
+"individual evaluators don't own cross-metric policy" either. All
+policy — including someday weighting some metrics more than others —
+belongs to the Gate's future policy layer, not scattered across
+evaluator implementations or buried in the runner's aggregation logic.
+
+**Alternatives considered:** Let each evaluator carry a "weight" or let
+the runner special-case which metrics are "blocking" vs "advisory" —
+rejected as premature; Sprint 2 has no policy layer yet to consume such a
+distinction, and adding it now would be a guess at requirements Sprint 3
+hasn't defined.
+
+**Trade-off:** Today, any single failing applicable metric fails the
+whole case, with no nuance (e.g., latency exceeding threshold fails the
+case exactly as hard as a forbidden-phrase leak). This is visible in the
+seed dataset (`ans-003` fails solely on latency). Acceptable because
+`MetricResult` still carries the full detail (which metric, what score
+vs. threshold) for a future policy layer to weight differently — no
+information is lost, just not yet acted on differently.
+
+### 10. Fixture-driven runner instead of a fake/mock model provider
+
+**Decision:** `EvaluationRunner.run()` takes a `dict[case_id,
+FixtureResponse]` of pre-recorded responses rather than calling any
+provider interface (real or fake). `DatasetService.get_fixtures()` loads
+these from a `{name}.v{version}.fixtures.json` file that sits alongside
+the dataset file.
+
+**Reason:** The spec explicitly excludes model providers from Sprint 2
+("Do NOT add external model providers... yet") but still requires an
+evaluation runner to exercise deterministically. A fixture map is the
+simplest thing that could work: it proves the evaluator pipeline,
+critical-case detection, and API surface end-to-end without inventing a
+throwaway provider abstraction that Sprint 3's real provider interface
+would likely replace anyway.
+
+**Alternatives considered:** Build a minimal `ModelProvider` protocol now
+with a single deterministic/stub implementation — rejected as scope
+creep and a risk of designing the wrong provider interface before Sprint
+3 defines real requirements (streaming? retries? multi-turn?). A random/
+templated fake response generator — rejected because non-deterministic
+or generated responses would make the "22 cases, 15 pass / 7 fail, 2
+critical failures" test assertions fragile and unable to target specific
+evaluators deliberately.
+
+**Trade-off:** `EvaluationRunner` cannot evaluate anything without a
+complete fixture map — `MissingFixtureError` if any case lacks one. This
+is a hard requirement, not a soft fallback, so the seed dataset's
+fixtures file must stay in sync with its case list. When Sprint 3 adds a
+real provider, the runner will need a second code path (or the fixture
+provider will be reframed as one more `ResponseProvider` implementation
+alongside a live one) — deferred deliberately.
+
+### 11. Dataset/fixture files on disk, not in a database or embedded in code
+
+**Decision:** Golden datasets and their fixtures are plain JSON files
+under `backend/datasets/`, loaded by `DatasetService.load_all()` at app
+startup into the existing `InMemoryRepository[GoldenDataset]`. Naming
+convention `{name}.v{version}.json` / `{name}.v{version}.fixtures.json`
+encodes versioning in the filename rather than a database column.
+
+**Reason:** "Versioned golden datasets" is a Sprint 2 requirement, and
+files are the simplest versionable, diffable, code-reviewable format —
+exactly what you want for eval data that should change deliberately and
+be tracked in git alongside the code that grades it. No database exists
+yet ([[Sprint 1 decision 2]] deferred persistence generally), so this
+avoids introducing one just for datasets.
+
+**Alternatives considered:** Store datasets as Python literals/fixtures
+inside the test suite — rejected because it conflates "data used to test
+the Quality Gate's own code" with "data the Quality Gate evaluates
+production systems against," which are different lifecycles (the latter
+should be editable/reviewable by non-engineers eventually, e.g. via the
+future dashboard). A database table — rejected as premature per Sprint
+1's persistence decision.
+
+**Trade-off:** `DatasetService` re-reads and re-validates every file on
+every app startup (no caching beyond the in-memory repository populated
+once at boot); at current scale (one seed dataset) this is instant, but a
+large dataset library would need lazy-loading or pagination — not needed
+yet.
