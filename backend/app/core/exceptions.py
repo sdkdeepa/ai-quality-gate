@@ -27,6 +27,27 @@ class NotFoundError(AppError):
     code = "not_found"
 
 
+class DatasetValidationError(AppError):
+    """Raised when a golden dataset file fails to parse or fails domain validation."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    code = "dataset_invalid"
+
+
+class FixtureValidationError(AppError):
+    """Raised when a fixture file is missing, malformed, or fails to parse."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    code = "fixture_invalid"
+
+
+class MissingFixtureError(AppError):
+    """Raised when a dataset case has no corresponding fixture response to evaluate."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "fixture_missing"
+
+
 def _error_body(code: str, message: str) -> dict:
     return {
         "error": {
@@ -51,7 +72,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=_error_body("validation_error", str(exc.errors())),
         )
 
