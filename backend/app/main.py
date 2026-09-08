@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from app.api import datasets, evaluations, health, status
+from app.api import datasets, evaluations, health, rag, status
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
@@ -11,9 +11,11 @@ from app.core.middleware import RequestIDMiddleware
 from app.domain import EvaluationCase, EvaluationRun, GoldenDataset
 from app.evaluation.runner import EvaluationRunner
 from app.providers.factory import ProviderFactory
+from app.rag.factory import build_retriever
 from app.repositories.in_memory import InMemoryCaseResultStore, InMemoryRepository
 from app.services.dataset_service import DatasetService
 from app.services.evaluation_service import EvaluationService
+from app.services.rag_service import RAGService
 from app.services.status_service import StatusService
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +55,16 @@ def create_app() -> FastAPI:
         provider_factory=app.state.provider_factory,
     )
 
+    app.state.rag_vector_store, app.state.rag_retriever = build_retriever(settings, BACKEND_ROOT)
+    app.state.rag_service = RAGService(
+        retriever=app.state.rag_retriever,
+        vector_store=app.state.rag_vector_store,
+        provider_factory=app.state.provider_factory,
+        dataset_service=app.state.dataset_service,
+        runner=app.state.evaluation_runner,
+        rag_dataset_name=settings.rag_dataset_name,
+    )
+
     app.add_middleware(RequestIDMiddleware)
     register_exception_handlers(app)
 
@@ -60,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(status.router, prefix=settings.api_v1_prefix)
     app.include_router(datasets.router, prefix=settings.api_v1_prefix)
     app.include_router(evaluations.router, prefix=settings.api_v1_prefix)
+    app.include_router(rag.router, prefix=settings.api_v1_prefix)
 
     return app
 

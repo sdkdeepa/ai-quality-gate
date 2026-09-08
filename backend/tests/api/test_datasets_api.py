@@ -25,7 +25,7 @@ def test_get_dataset_latest_resolves_to_newest_version(client):
     response = client.get("/api/v1/datasets/customer_support_bot/latest")
 
     assert response.status_code == 200
-    assert response.json()["version"] == "1.0.0"
+    assert response.json()["version"] == "1.1.0"
 
 
 def test_get_dataset_unknown_name_returns_404(client):

@@ -6,6 +6,9 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 
+# RAG vector store (rebuilt from backend/rag_corpus/ on startup)
+backend/chroma_store/
+
 # Env
 .env
 .env.*
