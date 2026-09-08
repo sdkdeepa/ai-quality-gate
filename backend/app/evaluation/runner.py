@@ -9,14 +9,19 @@ from app.domain.golden_dataset import GoldenDataset
 from app.evaluation.base import Evaluator
 from app.evaluation.deterministic import DEFAULT_EVALUATORS
 from app.evaluation.types import EvaluationInput, FixtureResponse
+from app.providers.base import Provider
+from app.providers.deterministic import DeterministicProvider
+from app.providers.types import ProviderRequest
 
 
 class EvaluationRunner:
-    """Runs a GoldenDataset's cases through deterministic evaluators using fixture responses.
+    """Runs a GoldenDataset's cases through deterministic evaluators.
 
-    No live model provider exists yet (Sprint 2 scope): the runner is fed
-    pre-recorded FixtureResponses so evaluation logic can be exercised and
-    tested end to end without calling out to a real system under test.
+    Cases are sourced from a Provider (dataset -> provider -> response ->
+    evaluators) — DeterministicProvider for the fixture-driven path tests and
+    CI rely on, or a live provider (OpenAIProvider, GeminiProvider, ...) for a
+    real system-under-test call. Evaluators never see a raw provider or its
+    SDK: they only ever get an EvaluationInput built from a ProviderResponse.
     """
 
     def __init__(self, evaluators: list[Evaluator] | None = None) -> None:
@@ -30,49 +35,78 @@ class EvaluationRunner:
         provider: str = "deterministic",
         model: str = "fixture-v1",
     ) -> tuple[EvaluationRun, list[CaseResult]]:
+        """Fixture-driven convenience path: wraps `fixtures` as a DeterministicProvider.
+
+        Raises MissingFixtureError upfront if any case lacks a fixture, matching
+        Sprint 2 behavior exactly (a live provider has no equivalent upfront
+        check — it fails per-case instead, via a normalized ProviderError).
+        """
         missing = [case.id for case in dataset.cases if case.id not in fixtures]
         if missing:
             raise MissingFixtureError(f"no fixture response for case ids: {missing}")
 
+        deterministic_provider = DeterministicProvider(fixtures, model=model, name=provider)
+        return self.run_with_provider(dataset, deterministic_provider)
+
+    def run_with_provider(
+        self, dataset: GoldenDataset, provider: Provider
+    ) -> tuple[EvaluationRun, list[CaseResult]]:
         run = EvaluationRun(
             dataset_version=dataset.version,
-            provider=provider,
-            model=model,
+            provider=provider.name,
+            model=provider.model,
             status=RunStatus.RUNNING,
         )
 
-        case_results = [self._evaluate_case(case, fixtures[case.id]) for case in dataset.cases]
+        case_results = [self._evaluate_case(case, provider) for case in dataset.cases]
 
         run.status = RunStatus.COMPLETED
         run.completed_at = datetime.now(UTC)
 
         return run, case_results
 
-    def _evaluate_case(self, case: EvaluationCase, fixture: FixtureResponse) -> CaseResult:
-        evaluation_input = EvaluationInput(
-            case=case,
-            response=fixture.response,
-            retrieved_context=fixture.retrieved_context,
-            latency_ms=fixture.latency_ms,
-            input_tokens=fixture.input_tokens,
-            output_tokens=fixture.output_tokens,
-            estimated_cost=fixture.estimated_cost,
+    def _evaluate_case(self, case: EvaluationCase, provider: Provider) -> CaseResult:
+        request = ProviderRequest(
+            case_id=case.id,
+            prompt=case.query,
+            json_schema=case.metadata.get("json_schema"),
         )
-        metric_results = [
-            evaluator.evaluate(evaluation_input)
-            for evaluator in self._evaluators
-            if evaluator.applies_to(case)
-        ]
-        passed = all(m.passed for m in metric_results) if metric_results else True
+        response = provider.generate(request)
+
+        if response.error is not None:
+            metric_results = []
+            passed = False
+        else:
+            evaluation_input = EvaluationInput(
+                case=case,
+                response=response.text,
+                retrieved_context=response.retrieved_context,
+                latency_ms=response.latency_ms,
+                input_tokens=response.input_tokens or 0,
+                output_tokens=response.output_tokens or 0,
+                estimated_cost=response.estimated_cost or 0.0,
+            )
+            metric_results = [
+                evaluator.evaluate(evaluation_input)
+                for evaluator in self._evaluators
+                if evaluator.applies_to(case)
+            ]
+            passed = all(m.passed for m in metric_results) if metric_results else True
+
         return CaseResult(
             case_id=case.id,
-            response=fixture.response,
-            retrieved_context=fixture.retrieved_context,
-            latency_ms=fixture.latency_ms,
-            input_tokens=fixture.input_tokens,
-            output_tokens=fixture.output_tokens,
-            estimated_cost=fixture.estimated_cost,
+            response=response.text,
+            retrieved_context=response.retrieved_context,
+            latency_ms=response.latency_ms,
+            input_tokens=response.input_tokens or 0,
+            output_tokens=response.output_tokens or 0,
+            estimated_cost=response.estimated_cost or 0.0,
             metric_results=metric_results,
             passed=passed,
             critical_failure=case.critical and not passed,
+            error=(
+                {"error_type": response.error.error_type.value, "message": response.error.message}
+                if response.error is not None
+                else None
+            ),
         )

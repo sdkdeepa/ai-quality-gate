@@ -10,6 +10,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware
 from app.domain import EvaluationCase, EvaluationRun, GoldenDataset
 from app.evaluation.runner import EvaluationRunner
+from app.providers.factory import ProviderFactory
 from app.repositories.in_memory import InMemoryCaseResultStore, InMemoryRepository
 from app.services.dataset_service import DatasetService
 from app.services.evaluation_service import EvaluationService
@@ -43,11 +44,13 @@ def create_app() -> FastAPI:
 
     app.state.case_result_store = InMemoryCaseResultStore()
     app.state.evaluation_runner = EvaluationRunner()
+    app.state.provider_factory = ProviderFactory(settings, app.state.dataset_service)
     app.state.evaluation_service = EvaluationService(
         dataset_service=app.state.dataset_service,
         runner=app.state.evaluation_runner,
         run_repository=app.state.run_repository,
         case_result_store=app.state.case_result_store,
+        provider_factory=app.state.provider_factory,
     )
 
     app.add_middleware(RequestIDMiddleware)
