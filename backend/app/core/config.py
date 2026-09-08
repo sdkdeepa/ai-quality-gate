@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
     provider_timeout_seconds: float = 30.0
 
+    rag_corpus_dir: str = "rag_corpus"
+    rag_chroma_dir: str = "chroma_store"
+    rag_collection_name: str = "rag-corpus"
+    rag_embeddings_provider: str = "deterministic"
+    rag_top_k: int = 4
+    rag_relevance_threshold: float = 0.08
+    rag_dataset_name: str = "customer_support_bot"
+
 
 @lru_cache
 def get_settings() -> Settings:

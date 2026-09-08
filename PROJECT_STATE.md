@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-09-08 (Sprint 3 complete, manually validated)
+Last updated: 2026-09-08 (Sprint 4 complete)
 
 ## Current architecture
 
@@ -13,8 +13,13 @@ ai-quality-gate/
     ├── pyproject.toml         # uv-managed project, deps + ruff + pytest config
     ├── README.md
     ├── datasets/               # versioned golden dataset JSON files (data, not code)
-    │   ├── customer_support_bot.v1.0.0.json           # 22-case seed golden dataset
-    │   └── customer_support_bot.v1.0.0.fixtures.json  # deterministic fixture responses
+    │   ├── customer_support_bot.v1.0.0.json             # 22-case seed golden dataset
+    │   ├── customer_support_bot.v1.0.0.fixtures.json    # deterministic fixture responses
+    │   ├── customer_support_bot.v1.1.0.json             # v1.0.0's 22 cases + 18 RAG cases (Sprint 4)
+    │   └── customer_support_bot.v1.1.0.fixtures.json    # fixtures for all 40 v1.1.0 cases
+    ├── rag_corpus/             # small knowledge base (data, not code) — see RAG system below
+    │   └── *.md                 # 9 short policy documents (returns, warranty, shipping, ...)
+    ├── chroma_store/           # gitignored; persisted ChromaDB, rebuilt from rag_corpus/ on startup
     └── app/
         ├── main.py             # FastAPI app factory (create_app), wires everything
         ├── domain/             # pure Pydantic domain models, no framework deps
@@ -38,19 +43,33 @@ ai-quality-gate/
         │   ├── openai_provider.py   # OpenAIProvider (only module importing `openai`)
         │   ├── gemini_provider.py   # GeminiProvider (only module importing `google.genai`)
         │   └── factory.py           # ProviderFactory: name -> Provider, resolves Settings/API keys
+        ├── rag/                 # sample RAG system-under-test (Sprint 4) — NOT part of the Gate
+        │   ├── types.py             # RetrievedChunk, RAGAnswer
+        │   ├── loader.py            # rag_corpus/*.md -> LangChain Document (our own code)
+        │   ├── chunking.py          # Document -> chunks via LangChain RecursiveCharacterTextSplitter
+        │   ├── embeddings.py        # Embeddings abstraction: DeterministicEmbeddings, OpenAIEmbeddings
+        │   ├── vector_store.py      # ChromaVectorStore: langchain_chroma.Chroma + persistence/idempotency
+        │   ├── corpus_service.py    # RAGCorpusService.ingest_if_needed() (idempotent, hash-checked)
+        │   ├── retriever.py         # Retriever: query -> relevance-filtered RetrievedChunks (our own code)
+        │   ├── prompt.py            # build_prompt(query, chunks) -> str (our own code)
+        │   ├── pipeline.py          # RAGPipeline: query -> retrieve -> prompt -> Provider -> RAGAnswer
+        │   ├── provider_adapter.py  # RAGProvider(Provider): makes the pipeline itself a Provider
+        │   └── factory.py           # build_retriever(settings): wires embeddings/store/ingestion
         ├── repositories/       # storage abstraction
         │   ├── base.py             # Repository protocol
         │   └── in_memory.py        # InMemoryRepository[T], InMemoryCaseResultStore
         ├── services/           # application/orchestration layer
         │   ├── status_service.py     # assembles /api/v1/status payload
         │   ├── dataset_service.py    # load/validate/list/get datasets + fixtures from disk
-        │   └── evaluation_service.py # orchestrates dataset -> provider factory -> runner -> repositories
+        │   ├── evaluation_service.py # orchestrates dataset -> provider factory -> runner -> repositories
+        │   └── rag_service.py        # orchestrates RAG query / chunk inspection / evaluate-a-case
         ├── api/                 # HTTP layer (FastAPI routers)
         │   ├── deps.py              # FastAPI dependency providers
         │   ├── health.py            # GET /health
         │   ├── status.py            # GET /api/v1/status
         │   ├── datasets.py          # GET /api/v1/datasets, GET /api/v1/datasets/{name}/{version}
-        │   └── evaluations.py       # POST /api/v1/evaluations/runs, GET /api/v1/evaluations/runs/{id}
+        │   ├── evaluations.py       # POST /api/v1/evaluations/runs, GET /api/v1/evaluations/runs/{id}
+        │   └── rag.py                # POST /rag/query, GET /rag/chunks, POST /rag/evaluate/{case_id}
         └── core/                 # cross-cutting concerns
             ├── config.py            # Settings (env-var driven, AQG_ prefix; dataset_dir + provider config)
             ├── context.py           # request-id ContextVar
@@ -91,7 +110,21 @@ failure modes (timeout, rate limit, unavailable, malformed response,
 authentication) — they return a `ProviderResponse` with `error` set instead,
 so one case failing to reach a live model never crashes an entire run.
 
-## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3)
+**The RAG system is a system under test, not part of the Quality Gate
+(Sprint 4):** `app/rag/` builds a small, real retrieve-then-generate
+pipeline (LangChain document loading/chunking + ChromaDB + a Sprint 3
+`Provider` for generation) — but it exists solely so the Gate has something
+realistic to evaluate. The Gate's evaluation logic (`app/evaluation/`) never
+imports anything from `app/rag/`; the dependency runs one way, RAG ->
+providers, exactly like every other system-under-test path. The only place
+`app/rag` and `app/evaluation` meet is `RAGProvider`
+(`app/rag/provider_adapter.py`), which makes the RAG pipeline *look like* a
+plain `Provider` so `EvaluationRunner.evaluate_case` can grade a RAG case
+with the same 8 deterministic evaluators as everything else — no
+RAG-specific evaluator, no RAG-specific branch in the runner. See
+[[Sprint 4 decision 17]] for exactly where LangChain is used vs. our own code.
+
+## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4)
 
 **Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
@@ -281,22 +314,136 @@ so one case failing to reach a live model never crashes an entire run.
   and a live `"provider": "gemini"` run): **DEFERRED** — same as above,
   gated on `AQG_GEMINI_API_KEY`.
 
+**Sprint 4 — Sample RAG System using LangChain and ChromaDB:**
+- Small local knowledge corpus (`backend/rag_corpus/*.md`, 9 short policy
+  documents): return policy (30-day standard / 45-day defective), warranty
+  (1-year electronics / 2-year appliances), shipping (current $4.99/$14.99
+  policy **plus** a deliberately superseded 2023 archive doc at $6.99/$17.99
+  — an intentional in-corpus conflict), loyalty program, data retention,
+  account security, subscription management, support hours.
+- Ingestion (`app/rag/loader.py` + `chunking.py` + `embeddings.py` +
+  `vector_store.py` + `corpus_service.py`): load `.md` files -> LangChain
+  `Document`s with `source_id`/`title` metadata (our own code) ->
+  `RecursiveCharacterTextSplitter` chunks stamped with a stable
+  `{source_id}::chunk-{n}` `chunk_id` (LangChain) -> embedded ->
+  `langchain_chroma.Chroma`, persisted to `backend/chroma_store/`
+  (gitignored). Idempotent: `RAGCorpusService.ingest_if_needed()` hashes the
+  chunk set and skips re-embedding if the corpus is unchanged since the last
+  ingest — mirrors `DatasetService.load_all()`'s "source of truth on disk,
+  rebuilt at startup" pattern from Sprint 2.
+- Embeddings abstraction (`app/rag/embeddings.py`): a `langchain_core`
+  `Embeddings` subclass either way. `DeterministicEmbeddings` (default) is
+  an offline hashing-trick bag-of-words embedder — deterministic, no API
+  key, mirrors `DeterministicProvider`'s role in keeping ingestion/tests/CI
+  fully offline. `OpenAIEmbeddings` is a thin wrapper around the OpenAI
+  embeddings endpoint (opt-in via `AQG_RAG_EMBEDDINGS_PROVIDER=openai` +
+  `AQG_OPENAI_API_KEY`).
+- Retrieval (`app/rag/retriever.py`, our own code — not a LangChain
+  `Retriever`): query -> `ChromaVectorStore.similarity_search` -> chunks
+  with `text`, `source_id`, `chunk_id`, and `relevance_score` (cosine
+  similarity, converted from Chroma's returned distance). A relevance floor
+  (`DEFAULT_RELEVANCE_THRESHOLD = 0.08`, tuned empirically against this
+  corpus) drops chunks below it — without it Chroma always returns `k`
+  results regardless of relevance, so a genuinely off-topic query would
+  never be distinguishable from a weak match.
+- RAG pipeline (`app/rag/pipeline.py`): `RAGPipeline.answer(query)` = query
+  -> `Retriever.retrieve` -> `build_prompt` (`app/rag/prompt.py`, our own
+  code — plain string templating, not a LangChain `PromptTemplate`) -> a
+  Sprint 3 `Provider.generate()` -> `RAGAnswer` (query, answer, retrieved
+  chunks, provider, model, retrieval/generation/total latency, tokens,
+  estimated cost, normalized error). The generation step is any `Provider`
+  — `DeterministicProvider`, `OpenAIProvider`, or `GeminiProvider` — so
+  swapping fixture-backed generation for a live model is a config choice.
+- `RAGProvider` (`app/rag/provider_adapter.py`): adapts `RAGPipeline` to the
+  `Provider` contract itself, so `EvaluationRunner.evaluate_case` (Sprint 3's
+  method, made public this sprint) can grade a RAG case exactly like any
+  other case — real retrieval feeds `ProviderResponse.retrieved_context`,
+  which is what makes `CitationPresenceEvaluator` meaningful for RAG cases.
+- Golden dataset extended: `customer_support_bot` v1.1.0
+  (`backend/datasets/customer_support_bot.v1.1.0.json` +
+  `.fixtures.json`) = the original 22 v1.0.0 cases + **18 new
+  category=`"rag"` cases** spanning all 7 required scenarios (`metadata.
+  rag_scenario`): correct (4), partial (3), irrelevant (2), missing (3),
+  conflicting (2), unsupported (2), multi-chunk (2). 4 of the 18 are
+  `critical=true`. Fixtures are crafted so the v1.1.0 run has **31
+  passing / 9 failing** (the original 7 plus 2 new deliberate RAG
+  failures) and **3 critical failures** (`str-002`, `neg-001` from
+  v1.0.0, plus `rag-013`) — the conflicting-shipping-cost case, whose
+  fixture deliberately cites the superseded $6.99 figure to prove
+  `forbidden_phrases` catches picking the wrong source when two chunks
+  disagree; `rag-009` deliberately answers an off-topic question
+  confidently instead of refusing, to prove `expected_refusal` still
+  catches that failure mode for RAG-sourced (not just canned) answers.
+  Verified empirically that live retrieval against the real corpus
+  behaves as each scenario intends (irrelevant/unsupported -> 0 chunks;
+  missing -> on-topic chunk retrieved despite the fact being absent;
+  conflicting -> both shipping docs retrieved; multi-chunk -> both needed
+  sources retrieved) — see `tests/rag/test_unsupported_queries.py` and
+  `tests/api/test_rag_api.py`.
+- `RAGService` (`app/services/rag_service.py`) + 3 new API endpoints
+  (`app/api/rag.py`, mounted under `/api/v1/rag`):
+  - `POST /rag/query` — ad-hoc query through the real pipeline; a manual
+    debugging/exploration tool for the system under test, not a chat
+    endpoint, and nothing else in the Gate depends on it. `provider` is
+    required and restricted to `"openai"|"gemini"` (no `"deterministic"`
+    default) — an ad-hoc query has no case_id for
+    `DeterministicProvider` to look a canned answer up by.
+  - `GET /rag/chunks` — inspect the corpus: lists every ingested chunk, or
+    (with `?query=`) previews what retrieval would return, ranked with
+    relevance scores, without running generation.
+  - `POST /rag/evaluate/{case_id}` — runs one RAG dataset case through
+    real retrieval + the selected generation provider (default
+    `"deterministic"`, no API key needed) and grades it with the same
+    deterministic evaluators as the rest of the Gate; returns the
+    `CaseResult` plus the retrieved chunks (with scores) for debugging.
+    Distinct from `POST /evaluations/runs`, which runs a whole dataset
+    without any RAG-specific detail in the response.
+- New settings (`AQG_` prefix): `RAG_CORPUS_DIR` (default `rag_corpus`),
+  `RAG_CHROMA_DIR` (default `chroma_store`), `RAG_COLLECTION_NAME`
+  (default `rag-corpus`), `RAG_EMBEDDINGS_PROVIDER` (default
+  `deterministic`), `RAG_TOP_K` (default `4`), `RAG_RELEVANCE_THRESHOLD`
+  (default `0.08`), `RAG_DATASET_NAME` (default `customer_support_bot`).
+- 96 new tests (271 total): ingestion (loader, chunking, corpus-service
+  idempotency), vector store (persistence, hash-based re-ingest
+  detection), embeddings (determinism, dimension, stopword filtering;
+  mocked `OpenAIEmbeddings`), retriever (relevance filtering, ranking),
+  pipeline (via a fake `Provider` — no real SDK or network), `RAGProvider`
+  contract tests, `RAGService`, the 3 new API endpoints, and a dedicated
+  `test_unsupported_queries.py` exercising the real corpus end-to-end for
+  every irrelevant/missing/unsupported case. Also updated 2 pre-existing
+  tests that hardcoded `"latest" -> "1.0.0"` now that v1.1.0 exists.
+- Explicitly out of scope per the sprint plan (deferred, not attempted):
+  RAGAS, DeepEval, OpenAI Evals, Phoenix.
+
 ## Current sprint
 
-Sprint 3 — Provider Abstraction, OpenAI and Gemini: **complete** (manually
-validated 2026-09-08; real-provider smoke checks deferred, not blocking).
+Sprint 4 — Sample RAG System using LangChain and ChromaDB: **complete**.
 
 ## Outstanding work (future sprints, not started)
 
 - Real-provider smoke validation: run `uv run pytest -v -m smoke` (or a
   live `"provider": "openai"`/`"gemini"` API call) with
   `AQG_OPENAI_API_KEY`/`AQG_GEMINI_API_KEY` set — deferred at the end of
-  Sprint 3, not yet done. Not a blocker for Sprint 4.
-- RAG pipeline (LangChain + ChromaDB), retrieval metrics beyond the simple
-  citation-presence check.
+  Sprint 3, still not done. Not a blocker.
+- Live-provider RAG validation: `POST /rag/query` and `POST
+  /rag/evaluate/{case_id}` with `provider="openai"`/`"gemini"` — the RAG
+  pipeline has only been exercised against `DeterministicProvider` so far
+  (real retrieval, canned generation); a real generation call through the
+  RAG pipeline hasn't been manually validated yet.
 - Framework-backed evaluators (DeepEval, RAGAS, OpenAI Evals) implementing
   the same `Evaluator` protocol as the deterministic ones — groundedness/
-  faithfulness, answer relevancy, context precision/recall.
+  faithfulness, answer relevancy, context precision/recall. These are the
+  natural next signal for RAG cases specifically (retrieval precision/
+  recall against `reference_context`, which the 18 new cases already
+  populate but nothing yet scores against).
+- Real embeddings in practice: `OpenAIEmbeddings` exists and is wired
+  through `AQG_RAG_EMBEDDINGS_PROVIDER=openai`, but hasn't been run
+  against the corpus — `DeterministicEmbeddings` is the only embeddings
+  backend exercised by tests/CI so far.
+- Retrieval quality metrics (precision@k, recall@k, MRR against
+  `reference_context`) — Sprint 4 only proves chunks are retrieved/
+  filtered correctly per scenario (see `test_unsupported_queries.py`),
+  it doesn't score retrieval quality numerically.
 - Release policy engine: thresholds config, baseline/regression comparison
   across runs, `GateDecision` computation (PASS/WARN/BLOCK) with audit
   trail — `GateDecision` exists as a domain model but nothing computes one
@@ -368,6 +515,26 @@ curl -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
 curl http://127.0.0.1:8000/api/v1/evaluations/runs/<run_id>
 ```
 
+Sprint 4's RAG endpoints (system-under-test, not the Gate itself):
+
+```bash
+# inspect the full ingested corpus
+curl http://127.0.0.1:8000/api/v1/rag/chunks
+
+# preview what retrieval would return for a query, without generation
+curl "http://127.0.0.1:8000/api/v1/rag/chunks?query=warranty+length+electronics"
+
+# ask the RAG system a question directly — requires a live generation
+# provider (no "deterministic" default; see PROJECT_STATE.md's decision 17)
+curl -X POST http://127.0.0.1:8000/api/v1/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is the warranty length on electronics?", "provider": "openai"}'
+
+# run one RAG dataset case through real retrieval + grading (no API key needed by default)
+curl -X POST http://127.0.0.1:8000/api/v1/rag/evaluate/rag-001 \
+  -H "Content-Type: application/json" -d '{}'
+```
+
 Interactive API docs at `/docs` (OpenAPI at `/openapi.json`).
 
 ## Important environment variables
@@ -387,5 +554,12 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_GEMINI_API_KEY` | unset | Gemini API key. Required to use `"provider": "gemini"`; without it that provider returns 400 `provider_not_configured` |
 | `AQG_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model name used by `GeminiProvider` |
 | `AQG_PROVIDER_TIMEOUT_SECONDS` | `30.0` | Request timeout passed to the OpenAI/Gemini SDK clients |
+| `AQG_RAG_CORPUS_DIR` | `rag_corpus` | Directory of `.md` knowledge-base files; relative paths resolve against `backend/` |
+| `AQG_RAG_CHROMA_DIR` | `chroma_store` | ChromaDB persistence directory (gitignored, rebuilt from `rag_corpus/`) |
+| `AQG_RAG_COLLECTION_NAME` | `rag-corpus` | ChromaDB collection name |
+| `AQG_RAG_EMBEDDINGS_PROVIDER` | `deterministic` | `deterministic` (offline, default) or `openai` (needs `AQG_OPENAI_API_KEY`) |
+| `AQG_RAG_TOP_K` | `4` | Number of chunks the retriever returns per query, before relevance filtering |
+| `AQG_RAG_RELEVANCE_THRESHOLD` | `0.08` | Minimum cosine similarity for a chunk to be returned; see `app/rag/retriever.py` |
+| `AQG_RAG_DATASET_NAME` | `customer_support_bot` | Dataset the `/rag/evaluate/{case_id}` endpoint resolves case ids against |
 
 Settings are also loadable from a `backend/.env` file (not committed).

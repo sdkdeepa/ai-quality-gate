@@ -21,7 +21,25 @@ def test_run_deterministic_evaluation_defaults_to_latest_version(client):
     )
 
     assert response.status_code == 200
-    assert response.json()["run"]["dataset_version"] == "1.0.0"
+    body = response.json()
+    assert body["run"]["dataset_version"] == "1.1.0"
+    assert body["case_count"] == 40
+    assert body["passed_count"] == 31
+    assert body["failed_count"] == 9
+
+
+def test_run_deterministic_evaluation_against_v1_1_0_rag_cases(client):
+    response = client.post(
+        "/api/v1/evaluations/runs",
+        json={"dataset_name": "customer_support_bot", "dataset_version": "1.1.0"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["case_count"] == 40
+    assert body["passed_count"] == 31
+    assert body["failed_count"] == 9
+    assert set(body["critical_failure_case_ids"]) == {"str-002", "neg-001", "rag-013"}
 
 
 def test_run_deterministic_evaluation_unknown_dataset_returns_404(client):

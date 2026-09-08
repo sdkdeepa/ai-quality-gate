@@ -407,3 +407,231 @@ never-configured `AQG_OPENAI_API_KEY` isn't discovered until the first
 `"provider": "openai"` request. Acceptable: fixture-driven runs (the
 default, and the only one exercised by the automated test suite) are
 completely unaffected by live-provider configuration.
+
+## Sprint 4 — Sample RAG System using LangChain and ChromaDB
+
+### 16. The RAG system is a system under test, not part of the Quality Gate
+
+**Decision:** `app/rag/` is a self-contained sample application — a real
+retrieve-then-generate pipeline over a small local corpus — built
+specifically to give the Gate something realistic to evaluate. It is not a
+chat feature, not a product surface, and the Gate's own evaluation code
+(`app/evaluation/`, the release-policy layer this is all in service of)
+never imports anything from `app/rag/`. The dependency direction is
+one-way: `app/rag` depends on `app/providers` (for generation) exactly the
+way any other system-under-test would; nothing in the Gate depends on
+`app/rag`.
+
+**Reason:** The sprint brief was explicit: "The Quality Gate is NOT
+becoming a chatbot. The RAG system exists only as a system-under-test for
+evaluation." Every architectural choice in this sprint follows from taking
+that literally — the RAG API endpoints (`/rag/query`, `/rag/chunks`,
+`/rag/evaluate/{case_id}`) are grouped under their own router and prefix,
+documented as debugging/exploration tools for the sample system, and nothing
+about the Gate's release-decision path (thresholds, `GateDecision`, audit
+trail — still Sprint 5+ work) is aware the RAG system exists.
+
+**Alternatives considered:** Building the RAG pipeline as a general
+"knowledge base" feature of the Gate itself (e.g., letting the Gate answer
+questions about its own datasets) — rejected outright as scope creep
+directly contradicting the brief. Skipping a dedicated `/rag/query`
+exploration endpoint and only exposing RAG through dataset evaluation —
+rejected because manually validating a new retrieval pipeline without any
+way to ask it an ad-hoc question and see the retrieved chunks would make
+Sprint 4's own manual validation nearly impossible.
+
+**Trade-off:** This sprint effectively ships two small systems in one
+codebase (the Gate, and a sample RAG app for the Gate to grade) with real
+but disciplined coupling between them (`RAGProvider`, one class, one
+direction). Future sprints must keep resisting the urge to let the RAG
+system grow product features — its only job is to be gradeable.
+
+### 17. Where LangChain is used, and where our own code takes over
+
+**Decision:** LangChain provides three things, and three things only:
+
+- **Document schema** (`langchain_core.documents.Document`) — the shared
+  in-memory shape for a loaded document and, later, a chunk.
+- **Chunking** (`langchain_text_splitters.RecursiveCharacterTextSplitter`,
+  `app/rag/chunking.py`) — a separator-aware, overlap-aware splitting
+  algorithm.
+- **The Chroma vector store integration** (`langchain_chroma.Chroma`,
+  wrapped by `app/rag/vector_store.py`) — add/query against ChromaDB
+  through LangChain's `Embeddings` interface.
+
+Everything else in the pipeline is our own code: loading corpus files
+(`app/rag/loader.py` reads `.md` files directly — no `DirectoryLoader`/
+`TextLoader`, both of which live in `langchain-community`, a package
+LangChain itself is sunsetting in favor of standalone integration
+packages); the embeddings implementations (`app/rag/embeddings.py`,
+`DeterministicEmbeddings`/`OpenAIEmbeddings` — LangChain's `Embeddings`
+*interface* is reused, but no LangChain embeddings *implementation* is
+installed); retrieval and the relevance floor (`app/rag/retriever.py` — a
+~20-line class, not a LangChain `BaseRetriever`); prompt construction
+(`app/rag/prompt.py` — plain string templating, not a `PromptTemplate`);
+and the pipeline orchestration and Provider-contract integration
+(`app/rag/pipeline.py`, `provider_adapter.py` — pure Sprint 3 `Provider`
+composition, no LangChain involved at all).
+
+**Reason:** LangChain earns its place exactly where it replaces
+well-tested, undifferentiated logic that would otherwise just be
+reimplemented worse (a recursive-splitting algorithm with sensible
+separator fallback; a maintained Chroma client wrapper that speaks
+LangChain's `Embeddings`/`Document` protocol so any future LangChain
+component — retrievers, chains, other vector stores — could be dropped in
+without touching our data model). It does *not* earn a place in the parts
+of this system that carry actual product logic specific to the Quality
+Gate — what "relevant enough to retrieve" means for this corpus, what the
+generation prompt says, how a RAG case's answer is graded — because those
+are exactly the decisions [[Sprint 1 decision 1]] and [[Sprint 3 decision
+12]] already established should stay in our own code, not a framework's.
+
+**Alternatives considered:** A LangChain `RetrievalQA`/LCEL chain for the
+whole pipeline — rejected because it would blur exactly the seam the
+`Provider` abstraction exists to keep sharp: the generation step must stay
+a plain Sprint 3 `Provider` so `RAGProvider` can hand a RAG case to
+`EvaluationRunner` unchanged. `langchain-community`'s `DirectoryLoader`/
+`TextLoader` for loading — rejected both because the package is being
+sunset and because reading 9 short markdown files ourselves is simpler
+than learning a loader's configuration surface. A LangChain-native
+`Embeddings` implementation (e.g. `HuggingFaceEmbeddings`) instead of the
+hand-rolled `DeterministicEmbeddings` — rejected for the default path
+because it would pull in a real model (network/disk weight download) for
+what Sprint 3's `DeterministicProvider` established should be a zero-
+dependency, always-available CI default.
+
+**Trade-off:** `DeterministicEmbeddings`' hashing-trick bag-of-words
+approach is lexical (token-overlap), not semantic — it has no stemming, so
+"return" and "returns" don't match, and reference/test queries had to be
+worded around this empirically (see `app/rag/retriever.py`'s
+`DEFAULT_RELEVANCE_THRESHOLD` docstring and `tests/rag/
+test_unsupported_queries.py`). This is an accepted, documented limitation
+of the always-available default, not a bug: real semantic retrieval
+quality is exactly what `AQG_RAG_EMBEDDINGS_PROVIDER=openai` (or a real
+embedding evaluator in a later sprint) is for.
+
+### 18. `RAGProvider` adapts the pipeline to the `Provider` contract, rather than adding a RAG-specific evaluation path
+
+**Decision:** `app/rag/provider_adapter.py`'s `RAGProvider` implements the
+same `Provider` protocol (`name`, `model`, `generate(request) -> response`)
+as `DeterministicProvider`/`OpenAIProvider`/`GeminiProvider`. It wraps a
+`Retriever` and a generation `Provider` internally, but from
+`EvaluationRunner`'s point of view it's just another `Provider` — `POST
+/rag/evaluate/{case_id}` calls `EvaluationRunner.evaluate_case` (made
+public this sprint; it was previously a private helper only `run_with_
+provider` called internally) exactly the way a plain-provider case would
+be graded.
+
+**Reason:** [[Sprint 3 decision 12]] and [[Sprint 3 decision 13]] already
+established the shape this should take: normalize everything (fixtures,
+live models, and now retrieval-augmented generation) behind one `Provider`
+contract so the runner and the 8 deterministic evaluators never need to
+know or care what actually produced a response. Adding a parallel
+"RAGEvaluationRunner" or a RAG-specific evaluator type would have
+duplicated the exact case -> request -> response -> evaluate -> CaseResult
+logic `evaluate_case` already implements, for no behavioral difference —
+`CitationPresenceEvaluator`, `RequiredPhraseEvaluator`, etc. already work
+correctly against `ProviderResponse.retrieved_context`, whether that
+content came from a fixture or a real ChromaDB query.
+
+**Alternatives considered:** A dedicated `RAGCaseResult`/`RAGRunner`
+carrying richer RAG-specific detail (per-chunk relevance scores) all the
+way through grading — rejected; the API layer already gets that detail
+more simply by calling `Retriever.retrieve` a second time directly
+(`RAGService.evaluate_case` — see the code) rather than plumbing chunk
+scores through `ProviderResponse`, which only ever needed to carry chunk
+*text* for `CitationPresenceEvaluator` to work. A new `Evaluator`
+implementation scoring retrieval precision/recall against
+`reference_context` — explicitly deferred (see `PROJECT_STATE.md`
+outstanding work); Sprint 4 proves the pipeline and the dataset scenarios,
+not a new metric.
+
+**Trade-off:** `RAGService.evaluate_case` calls `Retriever.retrieve` twice
+per request (once inside `RAGProvider.generate`, once directly for the
+API response's chunk detail) — a deliberate, cheap (in-process, no
+network) duplication chosen over threading extra fields through
+`ProviderResponse` for a contract every other provider also has to satisfy.
+
+### 19. Golden dataset extended in place (v1.1.0), with fixtures covering every case — not a separate RAG-only dataset
+
+**Decision:** The 18 new RAG cases live in the *same* `customer_support_bot`
+dataset, as v1.1.0 (`customer_support_bot.v1.1.0.json`), alongside the
+original 22 v1.0.0 cases — not a new `customer_support_bot_rag` dataset.
+`customer_support_bot.v1.1.0.fixtures.json` has a canned response for all
+40 cases, including the 18 new ones, so `POST /evaluations/runs` (Sprint
+3's bulk endpoint, provider defaulting to `"deterministic"`) grades the
+whole v1.1.0 dataset — RAG cases included — exactly the way it always has,
+with no RAG-specific code path.
+
+**Reason:** "Extend golden dataset with 15-20 RAG cases" (the sprint
+brief's own words) reads naturally as extending the existing dataset, and
+the existing dataset already had a `retrieval` category (`ret-001..004`)
+simulating RAG behavior via fixtures before a real RAG system existed —
+the new `rag` category cases are that same idea, now exercisable against
+the real pipeline too via `/rag/evaluate/{case_id}`. Populating fixtures
+for the new cases costs nothing (it's authoring canned text) and keeps
+`GoldenDataset`'s existing invariant intact: every case in a dataset has a
+fixture, so the fixture-driven path never has a "some cases work
+differently" special case.
+
+**Alternatives considered:** A separate `rag_corpus_eval` dataset —
+rejected; it would fragment the "one golden dataset for this system"
+mental model for no benefit, since nothing about `GoldenDataset` or
+`DatasetService` requires cases to be homogeneous (`category` is already
+a free-form string spanning answerable/unsupported/refusal/structured_
+output/retrieval/negative). Leaving the 18 new cases *out* of the
+fixtures file (since they're "meant to run against the real pipeline") —
+rejected because it would make `POST /evaluations/runs` against v1.1.0
+raise `MissingFixtureError`, breaking the bulk endpoint for a version bump
+that should be additive.
+
+**Trade-off:** Authoring 18 fixtures in addition to 18 cases roughly
+doubled the size of this sprint's dataset-authoring work, and two rounds
+of manual fixture-text tuning were needed to get the intended pass/fail
+outcome exactly right (`rag-014`'s first draft fixture mentioned the
+superseded "$6.99" figure while *explaining* it was outdated, which
+correctly-but-unintentionally tripped its own `forbidden_phrases` check —
+fixed by simplifying the fixture to state only the current figure). This
+is the same trade-off [[Sprint 2 decision 10]] already accepted for the
+original 22 cases, just at double the scale.
+
+### 20. ChromaDB persists to disk with idempotent, hash-checked re-ingestion
+
+**Decision:** `ChromaVectorStore` (`app/rag/vector_store.py`) persists to
+`backend/chroma_store/` (gitignored) via `langchain_chroma.Chroma`'s
+`persist_directory`. `RAGCorpusService.ingest_if_needed()`
+(`app/rag/corpus_service.py`) computes a hash of the loaded+chunked corpus
+and compares it against a hash recorded in a plain marker file
+(`chroma_store/.corpus_hash`) the last time ingestion ran; it only wipes
+and re-embeds the collection when the hash differs, mirroring
+`DatasetService.load_all()`'s "files on disk are the source of truth,
+reloaded at every startup" pattern from [[Sprint 2 decision 11]] — but
+without paying the (here, non-trivial for a real embedding model)
+re-embedding cost on every restart when nothing changed.
+
+**Reason:** Sprint 2's dataset-loading precedent works because parsing
+JSON is instant; embedding text is not, especially once
+`AQG_RAG_EMBEDDINGS_PROVIDER=openai` is in play (a network call per
+document). Persisting *and* checking a content hash gets both properties
+Sprint 2 wanted from a different mechanism: the corpus files are still the
+single source of truth (delete `chroma_store/` and the next startup
+rebuilds it from scratch), but an unchanged corpus costs one hash
+comparison instead of N embedding calls on every app restart or test run
+that calls `create_app()`.
+
+**Alternatives considered:** In-memory-only Chroma (no
+`persist_directory`) — rejected; the sprint brief explicitly lists
+"ChromaDB persistence" as a requirement, and losing the vector store on
+every restart would make `AQG_RAG_EMBEDDINGS_PROVIDER=openai` prohibitively
+slow/costly to develop against. Always wiping and re-ingesting on startup
+regardless of content — rejected for the same reason Sprint 2 didn't need
+this trade-off: it's wasted work (and wasted API cost, once real
+embeddings are used) for the overwhelmingly common case of "the corpus
+didn't change since last time."
+
+**Trade-off:** The hash-marker file is a second piece of persisted state
+alongside Chroma's own SQLite-backed storage, kept in sync by convention
+(only `ChromaVectorStore.replace_all` writes either) rather than enforced
+by a transaction spanning both — acceptable at this scale (single-process,
+no concurrent writers) but would need revisiting if ingestion ever became
+concurrent or multi-process.

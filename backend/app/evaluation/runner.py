@@ -58,14 +58,18 @@ class EvaluationRunner:
             status=RunStatus.RUNNING,
         )
 
-        case_results = [self._evaluate_case(case, provider) for case in dataset.cases]
+        case_results = [self.evaluate_case(case, provider) for case in dataset.cases]
 
         run.status = RunStatus.COMPLETED
         run.completed_at = datetime.now(UTC)
 
         return run, case_results
 
-    def _evaluate_case(self, case: EvaluationCase, provider: Provider) -> CaseResult:
+    def evaluate_case(self, case: EvaluationCase, provider: Provider) -> CaseResult:
+        """Run one case through `provider` and grade it. Public so callers that
+        want a single case's result without a full dataset run (e.g. the RAG
+        "evaluate a case" endpoint) can reuse this instead of re-implementing
+        the provider-response-to-CaseResult logic."""
         request = ProviderRequest(
             case_id=case.id,
             prompt=case.query,
