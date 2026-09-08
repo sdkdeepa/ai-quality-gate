@@ -281,3 +281,129 @@ every app startup (no caching beyond the in-memory repository populated
 once at boot); at current scale (one seed dataset) this is instant, but a
 large dataset library would need lazy-loading or pagination — not needed
 yet.
+
+## Sprint 3 — Provider Abstraction, OpenAI and Gemini
+
+### 12. Providers normalize failures into the response instead of raising
+
+**Decision:** `Provider.generate()` never raises for the five defined
+failure modes (`timeout`, `rate_limit`, `unavailable`, `malformed_response`,
+`authentication`). `OpenAIProvider` and `GeminiProvider` catch every
+relevant SDK exception internally and return a `ProviderResponse` with
+`error` set instead; `EvaluationRunner` checks `response.error` and
+records a failed `CaseResult` rather than letting an exception propagate.
+
+**Reason:** A run evaluates 20+ cases against a live model; one case
+hitting a rate limit or a transient 503 must not abort every other case in
+the run. Treating provider failure as *data* (a normal, expected outcome
+with its own type) rather than as an *exception* (an abnormal control-flow
+event) keeps the runner's per-case loop simple — no try/except around
+each `provider.generate()` call — and keeps failure information in the
+same place success information lives, so it can flow into `CaseResult`
+and eventually the API response without a separate error-reporting path.
+
+**Alternatives considered:** Let SDK exceptions propagate and catch them
+in the runner or `EvaluationService` — rejected because it would require
+the runner to know about `openai`/`google.genai` exception types,
+reintroducing exactly the SDK coupling the provider abstraction exists to
+prevent. A retry-with-backoff wrapper around each provider call — out of
+scope for Sprint 3 (see `PROJECT_STATE.md` outstanding work); normalizing
+the failure is a prerequisite for retry logic, not a substitute for it.
+
+**Trade-off:** Every call site that uses a `Provider` must remember to
+check `response.error` rather than relying on try/except to catch
+mistakes — there's no compiler-enforced guarantee a caller handles it.
+Accepted because the alternative (typed exceptions) would still require
+the same discipline (a matching `except` clause) while also leaking SDK
+exception types across the provider boundary.
+
+### 13. `DeterministicProvider` reframes Sprint 2's fixtures, rather than adding a parallel path
+
+**Decision:** `DeterministicProvider` takes the exact same `dict[case_id,
+FixtureResponse]` `DatasetService.get_fixtures()` already produced in
+Sprint 2 and wraps it as a `Provider`. `EvaluationRunner.run(dataset,
+fixtures)` — the Sprint 2 entry point — is kept, but is now a thin wrapper
+that builds a `DeterministicProvider` and delegates to the new
+`run_with_provider(dataset, provider)`, which is what `OpenAIProvider`/
+`GeminiProvider` runs also go through.
+
+**Reason:** [[Sprint 2 decision 10]] flagged this explicitly as deferred
+work: "when Sprint 3 adds a real provider, ... the fixture provider will
+be reframed as one more `ResponseProvider` implementation alongside a
+live one." Doing this instead of adding a second, independent live-run
+code path means there is exactly one place (`_evaluate_case`) that turns
+a response into a `CaseResult`, so fixture-driven and live-provider runs
+can never silently diverge in how they compute `passed`/`critical_failure`.
+
+**Alternatives considered:** Leave `run(dataset, fixtures)` as the only
+fixture path and add a completely separate `run_live(dataset, provider)`
+with its own case-evaluation logic — rejected as exactly the duplication
+[[Sprint 2 decision 10]] warned against; two copies of "build an
+EvaluationInput, run applicable evaluators, decide `passed`" would drift.
+
+**Trade-off:** `EvaluationRunner.run()`'s public signature
+(`fixtures: dict[str, FixtureResponse]`, keyword `provider`/`model` for
+naming) is preserved only because `DeterministicProvider` accepts an
+overridable `name`; the coupling between the two classes is intentional
+and would need to move together if either's constructor changes.
+
+### 14. Cost calculation is a pluggable, static pricing-table lookup, not a billing-API integration
+
+**Decision:** `TableCostCalculator` estimates cost from a hand-maintained
+`dict[model, (input_price_per_1m, output_price_per_1m)]`, injected into
+each live provider (defaulting to `OPENAI_PRICING`/`GEMINI_PRICING`). An
+unrecognized model name returns a configurable default price (`(0.0,
+0.0)`) instead of raising.
+
+**Reason:** Sprint 3 needs "estimated cost" on every `ProviderResponse`
+so the existing `CostThresholdEvaluator` from Sprint 2 keeps working
+against live-provider runs the same way it does against fixtures — but
+querying a real billing API per request would add a second network call
+and a second point of failure to every case, for a number this system
+only needs as an estimate/gate signal, not an invoice.
+
+**Alternatives considered:** Hardcode pricing inline in each provider —
+rejected because it couples pricing (which changes on the provider's
+schedule, not this codebase's) to request logic, and makes it impossible
+to override pricing in a test or a future config file without editing
+provider source. Fetching live pricing from each provider's API — no
+such API exists for either OpenAI or Gemini as of this sprint.
+
+**Trade-off:** Pricing tables will drift out of date as providers change
+list prices, and per-org negotiated/volume pricing isn't represented at
+all — `estimated_cost` is explicitly a release-gate budgeting signal, not
+a billing source of truth. `CostCalculator` is a `Protocol`, so swapping
+in a different (e.g. config-file-driven) implementation later doesn't
+require touching provider code.
+
+### 15. Provider selection is a per-request field, resolved through a factory — not fixed at process startup
+
+**Decision:** `POST /api/v1/evaluations/runs` takes a `provider` field
+(`"deterministic" | "openai" | "gemini"`, default `"deterministic"`).
+`ProviderFactory.create(provider_name, dataset=...)` builds the requested
+`Provider` per call, reading API keys/models from `Settings` and raising
+`ProviderConfigurationError` (400) if a live provider is requested without
+its key configured.
+
+**Reason:** The same running server needs to support fixture-driven runs
+(tests, CI, day-to-day dataset iteration — no API key, always available)
+and live-provider runs (manual validation, eventually real release
+gating) without a restart or a config flag that picks one mode for the
+whole process. A per-request field makes "which system under test did
+this run evaluate" an explicit, auditable part of every `EvaluationRun`
+(`run.provider`/`run.model`) rather than implicit server configuration.
+
+**Alternatives considered:** A single `AQG_PROVIDER` env var fixing the
+provider for the whole process — rejected because it would make comparing
+a deterministic regression-test run against a live-provider run require
+two separately configured server instances. Constructing providers eagerly
+at `create_app()` time (like `DatasetService`) — rejected for the live
+providers specifically, since that would require API keys to be present
+just to start the server at all, even for pure fixture-driven use.
+
+**Trade-off:** A malformed/unconfigured `provider` value is only caught
+at request time (400), not at server-startup time — a typo'd or
+never-configured `AQG_OPENAI_API_KEY` isn't discovered until the first
+`"provider": "openai"` request. Acceptable: fixture-driven runs (the
+default, and the only one exercised by the automated test suite) are
+completely unaffected by live-provider configuration.

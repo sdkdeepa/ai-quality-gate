@@ -12,7 +12,18 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 1 — Foundation and Domain Model: complete.**
+**Sprint 3 — Provider Abstraction, OpenAI and Gemini: complete.**
+
+The service loads versioned golden datasets from disk and grades
+system-under-test responses with 8 deterministic evaluators (exact/
+required/forbidden-phrase matching, JSON schema compliance, expected-refusal
+detection, citation presence, latency and cost thresholds). Responses now
+come from a provider abstraction — a `DeterministicProvider` (fixture-backed,
+for tests/CI), `OpenAIProvider`, and `GeminiProvider` — selected per
+evaluation run; evaluation logic never depends on the OpenAI or Gemini SDKs
+directly, and provider failures (timeout, rate limit, unavailable, malformed
+response, authentication) are normalized rather than raised. See
+`PROJECT_STATE.md` for full capability detail and outstanding work.
 
 See [`PROJECT_STATE.md`](PROJECT_STATE.md) for current architecture,
 completed capabilities, outstanding work, and exact run commands, and

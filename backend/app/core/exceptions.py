@@ -48,6 +48,14 @@ class MissingFixtureError(AppError):
     code = "fixture_missing"
 
 
+class ProviderConfigurationError(AppError):
+    """Raised when a requested provider is unknown or missing required configuration
+    (e.g. an API key env var) needed to construct it."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "provider_not_configured"
+
+
 def _error_body(code: str, message: str) -> dict:
     return {
         "error": {

@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 from app.domain.metric_result import MetricResult
@@ -16,6 +18,9 @@ class CaseResult(BaseModel):
     metric_results: list[MetricResult] = Field(default_factory=list)
     passed: bool
     critical_failure: bool = False
+    # Normalized provider error metadata (error_type, message) when the system
+    # under test could not be reached at all — set instead of running evaluators.
+    error: dict[str, Any] | None = None
 
     @field_validator("case_id")
     @classmethod

@@ -2,12 +2,14 @@ from app.core.exceptions import NotFoundError
 from app.domain.case_result import CaseResult
 from app.domain.evaluation_run import EvaluationRun
 from app.evaluation.runner import EvaluationRunner
+from app.providers.factory import ProviderFactory
 from app.repositories.in_memory import InMemoryCaseResultStore, InMemoryRepository
 from app.services.dataset_service import DatasetService
 
 
 class EvaluationService:
-    """Orchestrates a deterministic evaluation run: resolve dataset + fixtures, run, persist."""
+    """Orchestrates an evaluation run: resolve dataset, build the requested provider,
+    run, persist."""
 
     def __init__(
         self,
@@ -15,18 +17,23 @@ class EvaluationService:
         runner: EvaluationRunner,
         run_repository: InMemoryRepository[EvaluationRun],
         case_result_store: InMemoryCaseResultStore,
+        provider_factory: ProviderFactory,
     ) -> None:
         self._dataset_service = dataset_service
         self._runner = runner
         self._run_repository = run_repository
         self._case_result_store = case_result_store
+        self._provider_factory = provider_factory
 
-    def run_deterministic(
-        self, dataset_name: str, dataset_version: str | None = None
+    def run(
+        self,
+        dataset_name: str,
+        dataset_version: str | None = None,
+        provider_name: str = "deterministic",
     ) -> EvaluationRun:
         dataset = self._dataset_service.get_dataset(dataset_name, dataset_version)
-        fixtures = self._dataset_service.get_fixtures(dataset)
-        run, case_results = self._runner.run(dataset, fixtures)
+        provider = self._provider_factory.create(provider_name, dataset=dataset)
+        run, case_results = self._runner.run_with_provider(dataset, provider)
         self._run_repository.add(run)
         self._case_result_store.save(run.id, case_results)
         return run

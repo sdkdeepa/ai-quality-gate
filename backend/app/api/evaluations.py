@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -11,9 +11,10 @@ from app.services.evaluation_service import EvaluationService
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
 
 
-class RunDeterministicEvaluationRequest(BaseModel):
+class RunEvaluationRequest(BaseModel):
     dataset_name: str
     dataset_version: str | None = None
+    provider: Literal["deterministic", "openai", "gemini"] = "deterministic"
 
 
 def _run_summary(
@@ -34,12 +35,17 @@ def _run_summary(
 
 
 @router.post("/runs")
-def run_deterministic_evaluation(
-    request: RunDeterministicEvaluationRequest,
+def run_evaluation(
+    request: RunEvaluationRequest,
     evaluation_service: Annotated[EvaluationService, Depends(get_evaluation_service)],
 ) -> dict:
-    """Run every case in a dataset through the deterministic evaluators using fixture responses."""
-    run = evaluation_service.run_deterministic(request.dataset_name, request.dataset_version)
+    """Run every case in a dataset through the deterministic evaluators.
+
+    `provider` selects the response source: "deterministic" (default) replays
+    fixture responses for reproducible tests/CI; "openai"/"gemini" call the
+    live API (requires the matching AQG_OPENAI_API_KEY/AQG_GEMINI_API_KEY).
+    """
+    run = evaluation_service.run(request.dataset_name, request.dataset_version, request.provider)
     _, results = evaluation_service.get_run(run.id)
     return _run_summary(run, results)
 

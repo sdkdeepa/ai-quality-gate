@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     dataset_dir: str = "datasets"
 
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
+    provider_timeout_seconds: float = 30.0
+
 
 @lru_cache
 def get_settings() -> Settings:

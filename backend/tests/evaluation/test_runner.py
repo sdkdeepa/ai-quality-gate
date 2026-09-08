@@ -8,6 +8,7 @@ from app.domain.evaluation_case import EvaluationCase
 from app.domain.golden_dataset import GoldenDataset
 from app.evaluation.runner import EvaluationRunner
 from app.evaluation.types import FixtureResponse
+from app.providers.types import ProviderError, ProviderErrorType, ProviderRequest, ProviderResponse
 
 
 def _dataset(cases: list[EvaluationCase]) -> GoldenDataset:
@@ -132,3 +133,132 @@ def test_critical_case_pass_does_not_set_critical_failure():
 
     assert results[0].passed is True
     assert results[0].critical_failure is False
+
+
+class FakeProvider:
+    """A minimal Provider stub used to test run_with_provider without any real SDK."""
+
+    def __init__(self, name: str = "fake", model: str = "fake-model") -> None:
+        self.name = name
+        self.model = model
+        self._responses: dict[str, ProviderResponse] = {}
+        self.requests: list[ProviderRequest] = []
+
+    def set_response(self, case_id: str, response: ProviderResponse) -> None:
+        self._responses[case_id] = response
+
+    def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.requests.append(request)
+        return self._responses[request.case_id]
+
+
+def _provider_response(**overrides) -> ProviderResponse:
+    defaults = {"provider": "fake", "model": "fake-model", "text": "ok", "latency_ms": 10.0}
+    defaults.update(overrides)
+    return ProviderResponse(**defaults)
+
+
+class TestRunWithProvider:
+    def test_run_with_provider_produces_completed_run(self):
+        case = EvaluationCase(
+            id="c1", name="n", category="c", query="q", metadata={"required_phrases": ["ok"]}
+        )
+        dataset = _dataset([case])
+        provider = FakeProvider(name="fake", model="fake-model")
+        provider.set_response("c1", _provider_response(text="ok"))
+
+        runner = EvaluationRunner()
+        run, results = runner.run_with_provider(dataset, provider)
+
+        assert run.status == RunStatus.COMPLETED
+        assert run.provider == "fake"
+        assert run.model == "fake-model"
+        assert results[0].passed is True
+        assert results[0].response == "ok"
+
+    def test_case_query_becomes_the_provider_request_prompt(self):
+        case = EvaluationCase(id="c1", name="n", category="c", query="what is the return policy?")
+        dataset = _dataset([case])
+        provider = FakeProvider()
+        provider.set_response("c1", _provider_response())
+
+        EvaluationRunner().run_with_provider(dataset, provider)
+
+        assert provider.requests[0].case_id == "c1"
+        assert provider.requests[0].prompt == "what is the return policy?"
+
+    def test_case_json_schema_metadata_is_forwarded_to_the_provider_request(self):
+        schema = {"type": "object", "properties": {"a": {"type": "string"}}}
+        case = EvaluationCase(
+            id="c1", name="n", category="c", query="q", metadata={"json_schema": schema}
+        )
+        dataset = _dataset([case])
+        provider = FakeProvider()
+        provider.set_response("c1", _provider_response(text='{"a": "x"}'))
+
+        EvaluationRunner().run_with_provider(dataset, provider)
+
+        assert provider.requests[0].json_schema == schema
+
+    def test_provider_error_produces_failed_case_result_without_running_evaluators(self):
+        case = EvaluationCase(
+            id="c1", name="n", category="c", query="q", metadata={"required_phrases": ["ok"]}
+        )
+        dataset = _dataset([case])
+        provider = FakeProvider()
+        provider.set_response(
+            "c1",
+            _provider_response(
+                error=ProviderError(error_type=ProviderErrorType.TIMEOUT, message="took too long")
+            ),
+        )
+
+        _, results = EvaluationRunner().run_with_provider(dataset, provider)
+
+        assert results[0].passed is False
+        assert results[0].metric_results == []
+        assert results[0].error == {"error_type": "timeout", "message": "took too long"}
+
+    def test_provider_error_on_critical_case_sets_critical_failure(self):
+        case = EvaluationCase(id="c1", name="n", category="c", query="q", critical=True)
+        dataset = _dataset([case])
+        provider = FakeProvider()
+        provider.set_response(
+            "c1",
+            _provider_response(
+                error=ProviderError(
+                    error_type=ProviderErrorType.AUTHENTICATION, message="bad api key"
+                )
+            ),
+        )
+
+        _, results = EvaluationRunner().run_with_provider(dataset, provider)
+
+        assert results[0].critical_failure is True
+
+    def test_retrieved_context_from_provider_response_is_used_for_citation_evaluator(self):
+        case = EvaluationCase(
+            id="c1", name="n", category="c", query="q", metadata={"requires_citation": True}
+        )
+        dataset = _dataset([case])
+        provider = FakeProvider()
+        provider.set_response("c1", _provider_response(retrieved_context=["some source"]))
+
+        _, results = EvaluationRunner().run_with_provider(dataset, provider)
+
+        assert results[0].passed is True
+        assert results[0].retrieved_context == ["some source"]
+
+    def test_missing_token_and_cost_fields_default_to_zero_on_case_result(self):
+        case = EvaluationCase(id="c1", name="n", category="c", query="q")
+        dataset = _dataset([case])
+        provider = FakeProvider()
+        provider.set_response(
+            "c1", _provider_response(input_tokens=None, output_tokens=None, estimated_cost=None)
+        )
+
+        _, results = EvaluationRunner().run_with_provider(dataset, provider)
+
+        assert results[0].input_tokens == 0
+        assert results[0].output_tokens == 0
+        assert results[0].estimated_cost == 0.0
