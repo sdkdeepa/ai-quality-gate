@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.api._view import metrics_by_framework
 from app.api.deps import get_rag_service
 from app.rag.types import RAGAnswer
 from app.services.rag_service import RAGService
@@ -74,4 +75,10 @@ def evaluate_rag_case(
     case_result, retrieved_chunks = rag_service.evaluate_case(
         case_id, provider_name=request.provider
     )
-    return {"case_result": case_result, "retrieved_chunks": retrieved_chunks}
+    return {
+        "case_result": case_result,
+        "retrieved_chunks": retrieved_chunks,
+        # Sprint 5 requirement #8: deterministic vs. RAGAS metrics for this
+        # one case, side by side (framework -> that framework's MetricResults).
+        "metrics_by_framework": metrics_by_framework(case_result),
+    }

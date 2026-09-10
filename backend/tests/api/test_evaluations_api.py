@@ -68,6 +68,27 @@ def test_get_evaluation_run_returns_case_results(client):
     assert "expected_refusal" in failing_metrics
 
 
+def test_get_evaluation_run_exposes_metrics_grouped_by_framework(client):
+    """Sprint 5 requirement #8. RAGAS is disabled by default in this test
+    environment, so every case's grouping has only a 'deterministic' key -
+    proves the grouping is present and correctly keyed without needing a
+    live RAGAS evaluator."""
+    run_response = client.post(
+        "/api/v1/evaluations/runs",
+        json={"dataset_name": "customer_support_bot", "dataset_version": "1.1.0"},
+    )
+    run_id = run_response.json()["run"]["id"]
+
+    response = client.get(f"/api/v1/evaluations/runs/{run_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "metrics_by_framework" in body
+    assert set(body["metrics_by_framework"].keys()) == {c["case_id"] for c in body["case_results"]}
+    rag_case_grouping = body["metrics_by_framework"]["rag-001"]
+    assert set(rag_case_grouping.keys()) == {"deterministic"}
+
+
 def test_get_evaluation_run_unknown_id_returns_404(client):
     response = client.get("/api/v1/evaluations/runs/does-not-exist")
 

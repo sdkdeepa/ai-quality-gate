@@ -29,6 +29,25 @@ class Settings(BaseSettings):
     rag_relevance_threshold: float = 0.08
     rag_dataset_name: str = "customer_support_bot"
 
+    # Sprint 5 — RAGAS integration. Disabled by default: the Gate's default
+    # (fixture-driven, no-API-key) behavior is unchanged unless explicitly
+    # opted in. RAGAS's LLM judge/embeddings currently reuse the OpenAI
+    # provider's key/timeout (AQG_OPENAI_API_KEY, AQG_PROVIDER_TIMEOUT_SECONDS)
+    # rather than introducing a second credential to manage; see DECISIONS.md #21.
+    ragas_enabled: bool = False
+    # Comma-separated subset of KNOWN_RAGAS_METRICS (app/evaluation/ragas/factory.py).
+    ragas_metrics: str = "faithfulness,answer_relevancy,context_precision,context_recall"
+    ragas_llm_model: str | None = None  # falls back to openai_model when unset
+    ragas_embedding_model: str = "text-embedding-3-small"
+    ragas_faithfulness_threshold: float = 0.80
+    ragas_answer_relevancy_threshold: float = 0.70
+    ragas_context_precision_threshold: float = 0.70
+    ragas_context_recall_threshold: float = 0.70
+
+    @property
+    def ragas_metrics_list(self) -> list[str]:
+        return [m.strip() for m in self.ragas_metrics.split(",") if m.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:
