@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.api._view import metrics_by_framework
 from app.api.deps import get_evaluation_service
 from app.domain.case_result import CaseResult
 from app.domain.evaluation_run import EvaluationRun
@@ -31,6 +32,14 @@ def _run_summary(
     }
     if include_cases:
         body["case_results"] = results
+        # Sprint 5 requirement #8: let a caller inspect deterministic vs.
+        # RAGAS metrics for the same case side by side, keyed by case_id ->
+        # framework -> that framework's MetricResults. Additive only — the
+        # existing `case_results` shape (and every Sprint 1-4 consumer of
+        # it) is unchanged.
+        body["metrics_by_framework"] = {
+            result.case_id: metrics_by_framework(result) for result in results
+        }
     return body
 
 

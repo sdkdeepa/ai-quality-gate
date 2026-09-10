@@ -12,11 +12,18 @@ dependencies = [
     "jsonschema>=4.26.0",
     "openai>=1.54.0",
     "google-genai>=1.0.0",
-    "langchain-core>=0.3.0",
+    "langchain-core>=0.3.0,<1.0.0",
     "langchain-text-splitters>=0.3.0",
-    "langchain-community>=0.3.0",
+    "langchain-community>=0.3.31,<0.4.0",
     "langchain-chroma>=0.2.0",
     "chromadb>=0.5.0",
+    # Sprint 5 (RAGAS integration). Pinned below the 0.4.x line: ragas 0.4.3
+    # imports `langchain_community.chat_models.vertexai`, which moved to the
+    # `langchain_classic` package in langchain-community>=0.4.0 — that combo
+    # fails at import time. langchain-openai is pinned to match the same
+    # langchain-core generation. See DECISIONS.md #21.
+    "ragas>=0.4.3,<0.5.0",
+    "langchain-openai>=0.3.0,<0.4.0",
 ]
 
 [dependency-groups]

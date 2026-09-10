@@ -73,6 +73,22 @@ def test_evaluate_rag_case_defaults_to_deterministic(client):
     assert body["retrieved_chunks"][0]["source_id"] == "warranty_policy"
 
 
+def test_evaluate_rag_case_exposes_metrics_grouped_by_framework(client):
+    """Sprint 5 requirement #8: deterministic vs. RAGAS metrics for the same
+    case, inspectable side by side. RAGAS is disabled by default (no API
+    key in this test environment), so only 'deterministic' shows up here -
+    the key itself, and its grouping behavior, is what's under test."""
+    response = client.post("/api/v1/rag/evaluate/rag-001", json={})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "metrics_by_framework" in body
+    assert set(body["metrics_by_framework"].keys()) == {"deterministic"}
+    grouped_names = {m["metric_name"] for m in body["metrics_by_framework"]["deterministic"]}
+    case_names = {m["metric_name"] for m in body["case_result"]["metric_results"]}
+    assert grouped_names == case_names
+
+
 def test_evaluate_rag_case_conflicting_scenario_fails_critically(client):
     response = client.post("/api/v1/rag/evaluate/rag-013", json={})
 
