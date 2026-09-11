@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-09-08 (Sprint 4 complete)
+Last updated: 2026-09-10 (Sprint 5 complete)
 
 ## Current architecture
 
@@ -30,11 +30,15 @@ ai-quality-gate/
         │   ├── case_result.py      # CaseResult
         │   ├── gate_decision.py    # GateDecision
         │   └── golden_dataset.py   # GoldenDataset (name/version/created_at/description/cases) + semver_key
-        ├── evaluation/          # the internal evaluation interface + deterministic plugin
+        ├── evaluation/          # the internal evaluation interface + deterministic/RAGAS plugins
         │   ├── base.py              # Evaluator protocol (applies_to + evaluate -> MetricResult)
         │   ├── types.py             # EvaluationInput, FixtureResponse
         │   ├── deterministic.py     # 8 deterministic evaluators + DEFAULT_EVALUATORS
-        │   └── runner.py            # EvaluationRunner: dataset + provider -> EvaluationRun + CaseResults
+        │   ├── runner.py            # EvaluationRunner: dataset + provider -> EvaluationRun + CaseResults
+        │   └── ragas/               # Sprint 5 — RAGAS integration, isolated behind the same Evaluator protocol
+        │       ├── client.py            # RagasClient: only module importing `ragas`/building its judge client
+        │       ├── evaluator.py         # RagasFaithfulness/AnswerRelevancy/ContextPrecision/ContextRecallEvaluator
+        │       └── factory.py           # build_ragas_evaluators(settings) -> list[Evaluator], config-gated
         ├── providers/           # the internal provider interface + provider implementations
         │   ├── types.py             # ProviderRequest, ProviderResponse, ProviderError(Type)
         │   ├── base.py              # Provider protocol (name, model, generate)
@@ -65,6 +69,7 @@ ai-quality-gate/
         │   └── rag_service.py        # orchestrates RAG query / chunk inspection / evaluate-a-case
         ├── api/                 # HTTP layer (FastAPI routers)
         │   ├── deps.py              # FastAPI dependency providers
+        │   ├── _view.py             # metrics_by_framework(): groups a CaseResult's MetricResults by framework
         │   ├── health.py            # GET /health
         │   ├── status.py            # GET /api/v1/status
         │   ├── datasets.py          # GET /api/v1/datasets, GET /api/v1/datasets/{name}/{version}
@@ -86,18 +91,32 @@ no repository interface per aggregate, no CQRS, no DI container. Just enough
 seams to swap in-memory storage for a real database later without touching
 domain or API code.
 
-**Plugin boundary (now proven, not just planned):** `app/evaluation/base.py`
+**Plugin boundary (now proven twice over):** `app/evaluation/base.py`
 defines the `Evaluator` protocol — `applies_to(case)` + `evaluate(input) ->
 MetricResult`. The 8 deterministic evaluators in `app/evaluation/deterministic.py`
-are the first (and so far only) implementation of that protocol. They know
-nothing about HTTP, datasets-on-disk, or release policy — they take an
-`EvaluationInput` and return a normalized `MetricResult`. `EvaluationRunner`
-composes evaluators against a dataset's cases; it does **not** compute a
-PASS/WARN/BLOCK decision — that remains future work for the Gate's policy
-layer. When DeepEval/RAGAS/OpenAI Evals/Phoenix are integrated in a later
-sprint, they will implement this same `Evaluator` protocol side-by-side with
-the deterministic ones, proving the plugin boundary rather than just
-asserting it.
+were the first implementation of that protocol; the 4 RAGAS evaluators in
+`app/evaluation/ragas/evaluator.py` (Sprint 5) are the second, and neither
+`EvaluationRunner` nor the `Evaluator` protocol itself changed to add them —
+see Sprint 5's decision below. They know nothing about HTTP, datasets-on-disk,
+or release policy — they take an `EvaluationInput` and return a normalized
+`MetricResult`. `EvaluationRunner` composes evaluators against a dataset's
+cases; it does **not** compute a PASS/WARN/BLOCK decision — that remains
+future work for the Gate's policy layer. When DeepEval/OpenAI Evals/Phoenix
+are integrated in a later sprint, they will implement this same `Evaluator`
+protocol side-by-side with the deterministic and RAGAS ones.
+
+**RAGAS is an evaluation signal provider, not a policy owner (Sprint 5):**
+`app/evaluation/ragas/` adapts RAGAS's `Faithfulness`/`AnswerRelevancy`/
+`ContextPrecision`/`ContextRecall` metrics behind the same `Evaluator`
+protocol as everything else. RAGAS-specific types (`ragas.metrics.collections.*`,
+`ragas.llms.*`, `ragas.embeddings.*`) are confined to `app/evaluation/ragas/client.py`
+— the only module that imports `ragas` or builds the OpenAI client used
+purely as RAGAS's LLM judge — exactly like `openai_provider.py`/`gemini_provider.py`
+are the only modules importing their respective SDKs. The rest of the app
+only ever sees normalized `MetricResult`s with `framework="ragas"`; RAGAS
+never computes a PASS/WARN/BLOCK decision, and thresholds
+(`AQG_RAGAS_*_THRESHOLD`) live in the Gate's own `Settings`, not inside
+RAGAS. See [[Sprint 5 decision 21]] and [[Sprint 5 decision 22]].
 
 **Provider boundary (Sprint 3):** `app/providers/base.py` defines the
 `Provider` protocol — `name`, `model`, `generate(ProviderRequest) ->
@@ -124,7 +143,7 @@ with the same 8 deterministic evaluators as everything else — no
 RAG-specific evaluator, no RAG-specific branch in the runner. See
 [[Sprint 4 decision 17]] for exactly where LangChain is used vs. our own code.
 
-## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4)
+## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5)
 
 **Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
@@ -415,11 +434,107 @@ RAG-specific evaluator, no RAG-specific branch in the runner. See
 - Explicitly out of scope per the sprint plan (deferred, not attempted):
   RAGAS, DeepEval, OpenAI Evals, Phoenix.
 
+**Sprint 5 — RAGAS Integration:**
+- `app/evaluation/ragas/` adds RAG-focused evaluation signal through an
+  adapter, without coupling the Gate's release policy to RAGAS. Zero
+  changes to `EvaluationRunner` or the `Evaluator` protocol — the smallest
+  clean extension was to build new `Evaluator` implementations and change
+  only how `EvaluationRunner` is *constructed* in `main.py`
+  (`DEFAULT_EVALUATORS + build_ragas_evaluators(settings)`). See
+  [[Sprint 5 decision 21]].
+- `RagasClient` (`app/evaluation/ragas/client.py`) is the only module
+  importing `ragas` or building the OpenAI client used purely as RAGAS's
+  LLM judge/embeddings (`ragas.llms.llm_factory` +
+  `ragas.embeddings.base.embedding_factory`, both from `ragas.metrics.collections`'s
+  modern API) — mirrors `openai_provider.py`/`gemini_provider.py` being the
+  only modules importing their SDKs. Every SDK/RAGAS exception it can raise
+  is caught and mapped onto the **existing** `ProviderErrorType` vocabulary
+  (`timeout`/`authentication`/`rate_limit`/`unavailable`/`malformed_response`)
+  via `RagasEvaluatorError` — no second error-type enum. See
+  [[Sprint 5 decision 22]].
+- 4 evaluators in `app/evaluation/ragas/evaluator.py`, all
+  `framework="ragas"`: `RagasFaithfulnessEvaluator` (needs retrieved
+  context + a response; no reference answer), `RagasAnswerRelevancyEvaluator`
+  (needs only a response — still runs for refusal/unsupported RAG cases),
+  `RagasContextPrecisionEvaluator` and `RagasContextRecallEvaluator` (both
+  need `case.expected_answer` as the reference **and** retrieved context —
+  the irrelevant/missing/unsupported RAG scenarios have neither by design,
+  so these two are explicitly **skipped**, not scored, for 9 of the 18
+  v1.1.0 RAG cases). `applies_to` is data-driven off `_is_rag_case`
+  (category `"rag"`, a populated `reference_context`, or `rag_scenario`
+  metadata) — same pattern as `CitationPresenceEvaluator`.
+- **Three normalized non-quality states**, all carried in
+  `MetricResult.metadata["ragas_status"]` (no domain model changes needed —
+  `metadata: dict[str, Any]` already existed for exactly this):
+  `"scored"` (a real RAGAS judgment against `threshold`), `"skipped_missing_input"`
+  (case lacks a required input; `passed=True` — not-applicable must not fail
+  a case) and `"infrastructure_error"` (RAGAS/its dependencies/the judge
+  model failed to execute; `passed=False` so an outage never silently
+  produces PASS, but `explanation`/`metadata["error_type"]` make clear this
+  is **not** a quality score of 0 — a future Policy Engine sprint can treat
+  it differently, e.g. WARN, from a real threshold miss).
+- Configuration (`AQG_RAGAS_*`, all in `Settings`): `ragas_enabled` (default
+  `false` — zero import/behavior impact on the rest of the Gate when
+  unset), `ragas_metrics` (comma-separated subset of the 4 metric names),
+  `ragas_llm_model` (falls back to `AQG_OPENAI_MODEL`), `ragas_embedding_model`,
+  and one threshold setting per metric. `build_ragas_evaluators` (`app/evaluation/ragas/factory.py`)
+  fails fast at app-startup (`RagasConfigurationError`, a plain `RuntimeError`
+  — no HTTP request exists yet to attach an `AppError` response to) if
+  `ragas_enabled=true` without `AQG_OPENAI_API_KEY`, or if `ragas_metrics`
+  names something outside the known 4. Gemini-backed RAGAS judging is
+  **not implemented** this sprint (see Outstanding work below).
+- Comparison output (requirement #8): `app/api/_view.py`'s
+  `metrics_by_framework()` groups a `CaseResult`'s `MetricResult`s by
+  `framework`. Wired additively into `GET /api/v1/evaluations/runs/{id}`
+  (new `metrics_by_framework: {case_id: {framework: [MetricResult]}}` key)
+  and `POST /rag/evaluate/{case_id}` (new `metrics_by_framework: {framework:
+  [MetricResult]}` key) — existing response shapes unchanged, no frontend.
+- Dependency pin discovered and fixed: `ragas==0.4.3` imports
+  `langchain_community.chat_models.vertexai`, which moved to the
+  `langchain_classic` package in `langchain-community>=0.4.0` — that
+  combination fails at import time. Pinned `langchain-community>=0.3.31,<0.4.0`,
+  `langchain-core>=0.3.0,<1.0.0`, `langchain-openai>=0.3.0,<0.4.0` in
+  `pyproject.toml`; verified these resolve and import cleanly via `uv sync`.
+- 53 new tests (324 total, 2 still self-skipped without live API keys):
+  `RagasClient` exception-mapping/value-parsing (mocked — no `ragas`/`openai`
+  network calls), all 4 evaluators' `applies_to`/skip/infrastructure-failure/
+  pass/fail paths, `build_ragas_evaluators` config-error and
+  selected-metrics-configuration paths, `EvaluationRunner` producing both
+  deterministic and RAGAS `MetricResult`s for the same RAG case (with a
+  fake `Evaluator` standing in for the real RAGAS ones — no ragas import in
+  that test), `create_app()`'s evaluator-count wiring for
+  enabled/disabled/selected-metrics/missing-key, and the two new API
+  `metrics_by_framework` fields. All mocked by default — no RAGAS/OpenAI
+  API calls or charges from the normal test suite.
+- Explicitly out of scope per the sprint plan (deferred, not attempted):
+  DeepEval, OpenAI Evals, Phoenix, the PASS/WARN/BLOCK policy engine, a
+  regression baseline engine, JSON/HTML report generation, Docker/CI changes.
+
 ## Current sprint
 
-Sprint 4 — Sample RAG System using LangChain and ChromaDB: **complete**.
+Sprint 5 — RAGAS Integration: **complete**.
 
 ## Outstanding work (future sprints, not started)
+
+- **RAGAS real-provider validation**: every RAGAS test in the suite mocks
+  the OpenAI SDK boundary — no test has yet run a real RAGAS judge call
+  against a live OpenAI API key. Deferred, same shape as the Sprint 3
+  OpenAI/Gemini smoke-test gap below; not a blocker (see MANUAL VALIDATION
+  in the Sprint 5 PR/commit for exact steps once a key is available).
+- **Gemini-backed RAGAS judging**: `RagasClient` only builds its LLM judge
+  via `ragas.llms.llm_factory(..., client=openai.OpenAI(...))`; RAGAS's
+  `litellm` adapter would be needed to back the judge with Gemini instead.
+  Not implemented this sprint — `AQG_RAGAS_ENABLED=true` always requires
+  `AQG_OPENAI_API_KEY`, independent of which provider generates the answer
+  being graded.
+- **RAGAS results feeding the Policy Engine**: `MetricResult.metadata["ragas_status"]`
+  (`scored`/`skipped_missing_input`/`infrastructure_error`) exists
+  specifically so a future Policy Engine sprint can treat an infrastructure
+  failure differently (e.g. WARN/retry) from a real threshold miss (BLOCK)
+  — nothing consumes that distinction yet, since `GateDecision` computation
+  doesn't exist yet at all (see the pre-existing Sprint 4 outstanding item
+  below).
+
 
 - Real-provider smoke validation: run `uv run pytest -v -m smoke` (or a
   live `"provider": "openai"`/`"gemini"` API call) with
@@ -430,12 +545,10 @@ Sprint 4 — Sample RAG System using LangChain and ChromaDB: **complete**.
   pipeline has only been exercised against `DeterministicProvider` so far
   (real retrieval, canned generation); a real generation call through the
   RAG pipeline hasn't been manually validated yet.
-- Framework-backed evaluators (DeepEval, RAGAS, OpenAI Evals) implementing
-  the same `Evaluator` protocol as the deterministic ones — groundedness/
-  faithfulness, answer relevancy, context precision/recall. These are the
-  natural next signal for RAG cases specifically (retrieval precision/
-  recall against `reference_context`, which the 18 new cases already
-  populate but nothing yet scores against).
+- Framework-backed evaluators (DeepEval, OpenAI Evals) implementing the
+  same `Evaluator` protocol as the deterministic and RAGAS ones. RAGAS
+  itself shipped in Sprint 5; DeepEval/OpenAI Evals remain the natural next
+  signals to add behind the same protocol.
 - Real embeddings in practice: `OpenAIEmbeddings` exists and is wired
   through `AQG_RAG_EMBEDDINGS_PROVIDER=openai`, but hasn't been run
   against the corpus — `DeterministicEmbeddings` is the only embeddings
@@ -535,6 +648,22 @@ curl -X POST http://127.0.0.1:8000/api/v1/rag/evaluate/rag-001 \
   -H "Content-Type: application/json" -d '{}'
 ```
 
+Sprint 5's RAGAS integration (opt-in, disabled by default):
+
+```bash
+# run only the Sprint 5 / RAGAS test suite (fully mocked, no API key or cost)
+uv run pytest -v tests/evaluation/ragas/
+
+# start the server with RAGAS enabled (requires a real AQG_OPENAI_API_KEY —
+# RAGAS's LLM judge/embeddings reuse it; incurs real API cost per case scored)
+AQG_RAGAS_ENABLED=true AQG_OPENAI_API_KEY=sk-... uv run uvicorn app.main:app --reload
+
+# with the server above running, evaluate a RAG case and see deterministic +
+# RAGAS metrics side by side (the "metrics_by_framework" key)
+curl -X POST http://127.0.0.1:8000/api/v1/rag/evaluate/rag-001 \
+  -H "Content-Type: application/json" -d '{}'
+```
+
 Interactive API docs at `/docs` (OpenAPI at `/openapi.json`).
 
 ## Important environment variables
@@ -561,5 +690,13 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_RAG_TOP_K` | `4` | Number of chunks the retriever returns per query, before relevance filtering |
 | `AQG_RAG_RELEVANCE_THRESHOLD` | `0.08` | Minimum cosine similarity for a chunk to be returned; see `app/rag/retriever.py` |
 | `AQG_RAG_DATASET_NAME` | `customer_support_bot` | Dataset the `/rag/evaluate/{case_id}` endpoint resolves case ids against |
+| `AQG_RAGAS_ENABLED` | `false` | Adds the 4 RAGAS evaluators to the runner when `true`. Requires `AQG_OPENAI_API_KEY`; app startup raises `RagasConfigurationError` otherwise |
+| `AQG_RAGAS_METRICS` | `faithfulness,answer_relevancy,context_precision,context_recall` | Comma-separated subset to enable; an unknown name also raises `RagasConfigurationError` at startup |
+| `AQG_RAGAS_LLM_MODEL` | unset (falls back to `AQG_OPENAI_MODEL`) | Judge model RAGAS uses for its LLM-based metrics |
+| `AQG_RAGAS_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model RAGAS uses for `answer_relevancy` |
+| `AQG_RAGAS_FAITHFULNESS_THRESHOLD` | `0.80` | Pass/fail cutoff for the faithfulness metric |
+| `AQG_RAGAS_ANSWER_RELEVANCY_THRESHOLD` | `0.70` | Pass/fail cutoff for the answer-relevancy metric |
+| `AQG_RAGAS_CONTEXT_PRECISION_THRESHOLD` | `0.70` | Pass/fail cutoff for the context-precision metric |
+| `AQG_RAGAS_CONTEXT_RECALL_THRESHOLD` | `0.70` | Pass/fail cutoff for the context-recall metric |
 
 Settings are also loadable from a `backend/.env` file (not committed).

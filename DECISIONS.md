@@ -635,3 +635,115 @@ alongside Chroma's own SQLite-backed storage, kept in sync by convention
 by a transaction spanning both — acceptable at this scale (single-process,
 no concurrent writers) but would need revisiting if ingestion ever became
 concurrent or multi-process.
+
+## Sprint 5 — RAGAS Integration
+
+### 21. Zero changes to `EvaluationRunner`; RAGAS evaluators are added by changing evaluator construction in `main.py`
+
+**Decision:** Before writing any Sprint 5 code, we inspected
+`app/evaluation/base.py` and `app/evaluation/runner.py` to find the
+smallest clean extension for a framework-backed evaluator. `EvaluationRunner.__init__`
+already accepts an injected `evaluators: list[Evaluator] | None` and
+`evaluate_case` already applies whichever evaluators are present via
+`applies_to`/`evaluate` — nothing in the runner assumes "deterministic" or
+hardcodes `DEFAULT_EVALUATORS`. So Sprint 5 adds 4 new `Evaluator`
+implementations (`app/evaluation/ragas/evaluator.py`) and changes exactly
+one line's worth of wiring in `create_app()` (`app/main.py`):
+`evaluators = list(DEFAULT_EVALUATORS) + build_ragas_evaluators(settings)`,
+passed into `EvaluationRunner(evaluators=evaluators)`. `runner.py` itself
+is byte-for-byte unchanged from Sprint 4.
+
+**Reason:** [[Sprint 4 decision 18]] and the "Plugin boundary" note in
+`PROJECT_STATE.md` already predicted this: "When DeepEval/RAGAS/OpenAI
+Evals/Phoenix are integrated in a later sprint, they will implement this
+same `Evaluator` protocol side-by-side with the deterministic ones." Sprint
+5 is the first sprint to actually test that claim, and it held — building a
+parallel evaluation path (a second runner, a RAG-specific branch, a new
+orchestration service) would have been strictly more code for no
+additional capability, and would have contradicted the sprint brief's
+explicit "do not create a parallel evaluation architecture if the existing
+architecture can be extended cleanly."
+
+**Alternatives considered:** A `RagasEvaluationRunner` wrapping/duplicating
+`EvaluationRunner` — rejected; two runners means two places a future
+Policy Engine sprint has to look, and nothing about RAGAS's inputs
+(query/response/retrieved-context/reference) needed anything `EvaluationInput`
+didn't already carry. A `case.metadata["ragas"]`-driven branch inside
+`evaluate_case` — rejected; `applies_to`/`evaluate` on the `Evaluator`
+protocol is exactly that branch, already generalized, so adding a
+special-cased branch alongside it would be redundant and would violate the
+existing "evaluators are data-driven, not category-hardcoded" principle
+([[Sprint 2 decision 8]]).
+
+**Trade-off:** `build_ragas_evaluators(settings)` runs at `create_app()`
+time, which means enabling RAGAS (`AQG_RAGAS_ENABLED=true`) without a valid
+`AQG_OPENAI_API_KEY` fails app *startup*, not the first request — a
+deliberate fail-fast choice (see [[Sprint 5 decision 22]]) but one that
+differs from how a per-request provider misconfiguration behaves today
+(`ProviderConfigurationError`, a 400 on the specific request that asked for
+`"provider": "openai"`). This asymmetry is intentional: RAGAS's
+configuration is a fixed part of the running process (which evaluators
+exist for every run), not a per-request choice the way `provider` is.
+
+### 22. RAGAS-specific types are confined to `RagasClient`; its failures reuse `ProviderErrorType`, not a new enum
+
+**Decision:** `app/evaluation/ragas/client.py` is the only module in the
+codebase that imports `ragas` or constructs the `openai.OpenAI` client used
+purely as RAGAS's LLM judge/embeddings backend (via `ragas.llms.llm_factory`
+and `ragas.embeddings.base.embedding_factory`, RAGAS's modern
+`ragas.metrics.collections` API). `app/evaluation/ragas/evaluator.py` never
+imports `ragas` — it only ever receives a `RagasScore` (success) or catches
+a `RagasEvaluatorError` (infrastructure failure) from `RagasClient`.
+`RagasEvaluatorError.error_type` reuses the **existing**
+`app.providers.types.ProviderErrorType` enum (`TIMEOUT`/`AUTHENTICATION`/
+`RATE_LIMIT`/`UNAVAILABLE`/`MALFORMED_RESPONSE`) rather than introducing a
+second, RAGAS-specific error-type enum.
+
+**Reason:** Mirrors [[Sprint 3 decision 12]]
+(`OpenAIProvider`/`GeminiProvider` are the only modules importing their
+SDKs; every SDK exception is caught and normalized before it can reach
+evaluation logic) — the same isolation principle applies verbatim to a
+framework-backed evaluator's judge client. The error-type reuse is because
+the sprint brief's own failure-mode list ("RAGAS dependency failure",
+"evaluator model timeout", "authentication failure", "rate limit",
+"malformed evaluator response", "unavailable evaluator service") maps
+1:1 onto `ProviderErrorType`'s existing 5 values — inventing
+`RagasErrorType` with the same 5 members would be duplication with no
+semantic gain, and would cost a second thing for any future consumer
+(a Policy Engine, a dashboard) to know how to interpret.
+
+A RAGAS metric result now normalizes into exactly one of three states,
+all carried in `MetricResult.metadata["ragas_status"]` rather than a
+domain model change (`MetricResult.metadata: dict[str, Any]` already
+existed for exactly this — see [[Sprint 1 decision 2]]'s Pydantic-model
+layering): `"scored"` (ran, judged against `threshold`), `"skipped_missing_input"`
+(the case genuinely lacks a required input — e.g. `case.expected_answer`
+for `context_precision`/`context_recall` on the irrelevant/missing/unsupported
+RAG scenarios — `passed=True`, since "not applicable" must not fail a
+case), and `"infrastructure_error"` (RAGAS/its dependencies/the judge model
+failed to execute — `passed=False`, so an outage never silently produces
+PASS, but distinguishable via `metadata` from a real quality score of 0).
+
+**Alternatives considered:** Representing an infrastructure failure as
+`score=0.0, passed=False` with no metadata flag — explicitly rejected by
+the sprint brief itself ("An infrastructure failure must NOT be represented
+as score=0... Do not allow a RAGAS infrastructure problem to silently
+produce PASS"); a bare 0 is indistinguishable from a real faithfulness
+score of 0.0, which a future Policy Engine would then be unable to treat
+differently (e.g. retry/WARN vs. hard BLOCK). Raising the underlying
+`ragas`/`openai` exception straight out of `Evaluator.evaluate()` —
+rejected; every other evaluator in the codebase (deterministic and
+provider-backed alike) guarantees it never raises for an expected failure
+mode, and a RAGAS outage taking down an entire evaluation run would be a
+regression from that guarantee. A second `RagasErrorType` enum — rejected
+per the "Reason" above; reuse costs nothing and keeps one vocabulary for
+"something in the response-generation/evaluation pipeline failed to
+execute" across providers and evaluators alike.
+
+**Trade-off:** Reusing `ProviderErrorType` means a couple of its members
+carry a slightly stretched meaning for a RAGAS context (e.g. `AUTHENTICATION`
+here means "the judge model's API key was rejected," not "the system under
+test's provider was") — judged acceptable since the *shape* of the failure
+(a credential problem, distinct from a timeout or a rate limit) is
+identical either way, and a single enum is easier for any future consumer
+to switch on than two enums with the same 5 cases under different names.

@@ -12,18 +12,22 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 3 — Provider Abstraction, OpenAI and Gemini: complete.**
+**Sprint 5 — RAGAS Integration: complete.**
 
 The service loads versioned golden datasets from disk and grades
 system-under-test responses with 8 deterministic evaluators (exact/
 required/forbidden-phrase matching, JSON schema compliance, expected-refusal
-detection, citation presence, latency and cost thresholds). Responses now
-come from a provider abstraction — a `DeterministicProvider` (fixture-backed,
-for tests/CI), `OpenAIProvider`, and `GeminiProvider` — selected per
-evaluation run; evaluation logic never depends on the OpenAI or Gemini SDKs
-directly, and provider failures (timeout, rate limit, unavailable, malformed
-response, authentication) are normalized rather than raised. See
-`PROJECT_STATE.md` for full capability detail and outstanding work.
+detection, citation presence, latency and cost thresholds), plus 4
+RAGAS-backed evaluators (faithfulness, answer relevancy, context precision,
+context recall) for RAG cases — opt-in via `AQG_RAGAS_ENABLED`, disabled by
+default. Responses come from a provider abstraction — a
+`DeterministicProvider` (fixture-backed, for tests/CI), `OpenAIProvider`,
+and `GeminiProvider` — selected per evaluation run; evaluation logic never
+depends on the OpenAI/Gemini/RAGAS SDKs directly, and provider/evaluator
+failures (timeout, rate limit, unavailable, malformed response,
+authentication) are normalized rather than raised. A small LangChain +
+ChromaDB RAG pipeline exists as a system under test. See `PROJECT_STATE.md`
+for full capability detail and outstanding work.
 
 See [`PROJECT_STATE.md`](PROJECT_STATE.md) for current architecture,
 completed capabilities, outstanding work, and exact run commands, and
