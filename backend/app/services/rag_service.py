@@ -64,7 +64,11 @@ class RAGService:
         ]
 
     def evaluate_case(
-        self, case_id: str, *, provider_name: str = "deterministic"
+        self,
+        case_id: str,
+        *,
+        provider_name: str = "deterministic",
+        frameworks: set[str] | None = None,
     ) -> tuple[CaseResult, list[RetrievedChunk]]:
         dataset = self._dataset_service.get_dataset(self._rag_dataset_name, "latest")
         case = next((c for c in dataset.cases if c.id == case_id), None)
@@ -73,7 +77,7 @@ class RAGService:
 
         generation_provider = self._build_generation_provider(provider_name)
         rag_provider = RAGProvider(self._retriever, generation_provider)
-        case_result = self._runner.evaluate_case(case, rag_provider)
+        case_result = self._runner.evaluate_case(case, rag_provider, frameworks=frameworks)
         retrieved_chunks = self._retriever.retrieve(case.query)
         return case_result, retrieved_chunks
 

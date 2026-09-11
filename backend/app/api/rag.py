@@ -25,6 +25,9 @@ class RAGQueryRequest(BaseModel):
 
 class EvaluateRAGCaseRequest(BaseModel):
     provider: ProviderName = "deterministic"
+    # Sprint 6: same evaluator-combination selection as
+    # POST /evaluations/runs — None (default) runs every enabled framework.
+    frameworks: list[Literal["deterministic", "ragas", "deepeval"]] | None = None
 
 
 @router.post("/query")
@@ -73,7 +76,9 @@ def evaluate_rag_case(
     dataset against a provider without retrieval.
     """
     case_result, retrieved_chunks = rag_service.evaluate_case(
-        case_id, provider_name=request.provider
+        case_id,
+        provider_name=request.provider,
+        frameworks=set(request.frameworks) if request.frameworks is not None else None,
     )
     return {
         "case_result": case_result,

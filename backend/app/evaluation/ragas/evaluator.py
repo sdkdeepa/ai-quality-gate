@@ -45,6 +45,10 @@ class RagasMetricEvaluator:
     """
 
     name: str = "ragas_metric"
+    # Sprint 6: framework identity exposed on the evaluator itself (not just
+    # on the MetricResults it produces) so EvaluationRunner can filter
+    # evaluators by framework without running them. See app/evaluation/base.py.
+    framework: str = FRAMEWORK
 
     def __init__(self, client: RagasClient, threshold: float) -> None:
         self._client = client

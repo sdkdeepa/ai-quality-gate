@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     def ragas_metrics_list(self) -> list[str]:
         return [m.strip() for m in self.ragas_metrics.split(",") if m.strip()]
 
+    # Sprint 6 — DeepEval integration. Disabled by default, same rationale
+    # as RAGAS. Only one DeepEval evaluator ships this sprint (a G-Eval
+    # custom-criteria check), so there is no AQG_DEEPEVAL_METRICS selector
+    # yet the way AQG_RAGAS_METRICS exists — see DECISIONS.md #23 for why.
+    # The judge model reuses AQG_OPENAI_API_KEY, same as RAGAS.
+    deepeval_enabled: bool = False
+    deepeval_llm_model: str | None = None  # falls back to openai_model when unset
+    deepeval_criteria_threshold: float = 0.70
+
 
 @lru_cache
 def get_settings() -> Settings:

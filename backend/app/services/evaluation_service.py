@@ -30,10 +30,11 @@ class EvaluationService:
         dataset_name: str,
         dataset_version: str | None = None,
         provider_name: str = "deterministic",
+        frameworks: set[str] | None = None,
     ) -> EvaluationRun:
         dataset = self._dataset_service.get_dataset(dataset_name, dataset_version)
         provider = self._provider_factory.create(provider_name, dataset=dataset)
-        run, case_results = self._runner.run_with_provider(dataset, provider)
+        run, case_results = self._runner.run_with_provider(dataset, provider, frameworks=frameworks)
         self._run_repository.add(run)
         self._case_result_store.save(run.id, case_results)
         return run
