@@ -95,6 +95,46 @@ def test_get_evaluation_run_unknown_id_returns_404(client):
     assert response.status_code == 404
 
 
+def test_run_evaluation_with_frameworks_filter_restricts_metric_results(client):
+    """Sprint 6 requirement #4: API-based evaluator-combination selection."""
+    run_response = client.post(
+        "/api/v1/evaluations/runs",
+        json={
+            "dataset_name": "customer_support_bot",
+            "dataset_version": "1.1.0",
+            "frameworks": ["deterministic"],
+        },
+    )
+    run_id = run_response.json()["run"]["id"]
+
+    response = client.get(f"/api/v1/evaluations/runs/{run_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    for case_grouping in body["metrics_by_framework"].values():
+        assert set(case_grouping.keys()) <= {"deterministic"}
+
+
+def test_run_evaluation_with_disabled_framework_yields_no_error_and_no_results_from_it(client):
+    """Requesting a framework that isn't enabled process-wide (e.g.
+    "deepeval" with AQG_DEEPEVAL_ENABLED unset in this test environment) is
+    not an error - it just contributes zero evaluators/metric results."""
+    response = client.post(
+        "/api/v1/evaluations/runs",
+        json={
+            "dataset_name": "customer_support_bot",
+            "dataset_version": "1.1.0",
+            "frameworks": ["deepeval"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    # No deepeval evaluators exist in this process -> nothing to grade ->
+    # every case vacuously passes, same rule as an empty metric_results list.
+    assert body["passed_count"] == body["case_count"]
+
+
 def test_run_with_explicit_deterministic_provider_matches_default(client):
     response = client.post(
         "/api/v1/evaluations/runs",

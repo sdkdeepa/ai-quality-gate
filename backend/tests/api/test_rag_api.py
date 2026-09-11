@@ -89,6 +89,18 @@ def test_evaluate_rag_case_exposes_metrics_grouped_by_framework(client):
     assert grouped_names == case_names
 
 
+def test_evaluate_rag_case_with_frameworks_filter_restricts_metrics(client):
+    """Sprint 6 requirement #4, single-case path."""
+    response = client.post(
+        "/api/v1/rag/evaluate/rag-001",
+        json={"frameworks": ["deterministic"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body["metrics_by_framework"].keys()) <= {"deterministic"}
+
+
 def test_evaluate_rag_case_conflicting_scenario_fails_critically(client):
     response = client.post("/api/v1/rag/evaluate/rag-013", json={})
 

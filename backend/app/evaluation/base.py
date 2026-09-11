@@ -15,6 +15,14 @@ class Evaluator(Protocol):
     """
 
     name: str
+    # Sprint 6: which framework this evaluator's MetricResults are tagged
+    # with ("deterministic" / "ragas" / "deepeval" / ...). Added so
+    # EvaluationRunner can filter its evaluator list by framework
+    # (requirement: API-based evaluator-combination selection) without
+    # having to run an evaluator just to find out what it is. Every
+    # MetricResult already carried this; it was only missing on the
+    # Evaluator itself.
+    framework: str
 
     def applies_to(self, case: EvaluationCase) -> bool:
         """Whether this evaluator has anything to check for the given case."""

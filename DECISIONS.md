@@ -747,3 +747,180 @@ test's provider was") — judged acceptable since the *shape* of the failure
 (a credential problem, distinct from a timeout or a rate limit) is
 identical either way, and a single enum is easier for any future consumer
 to switch on than two enums with the same 5 cases under different names.
+
+## Sprint 6 — DeepEval Integration
+
+### 23. Only one DeepEval metric ships this sprint: G-Eval custom criteria; answer relevancy, faithfulness, and hallucination are omitted as duplicates of Sprint 5's RAGAS metrics
+
+**Decision:** Before implementing anything, we compared each of the sprint
+brief's 4 "potential areas" against what Sprint 5's RAGAS evaluators and
+Sprint 1-4's deterministic evaluators already cover:
+
+- **Answer relevancy** (`deepeval.metrics.AnswerRelevancyMetric`): measures
+  whether the response addresses the user's query. `RagasAnswerRelevancyEvaluator`
+  (Sprint 5) already measures exactly this, on exactly the same case
+  population (`applies_to` isn't even RAG-restricted for either). **Omitted.**
+- **Faithfulness/groundedness** (`deepeval.metrics.FaithfulnessMetric`):
+  measures whether claims in the response are supported by retrieved
+  context. `RagasFaithfulnessEvaluator` (Sprint 5) measures the same thing,
+  same population (any case with `retrieved_context`). **Omitted.**
+- **Hallucination** (`deepeval.metrics.HallucinationMetric`): DeepEval's own
+  docs describe this as "similar to faithfulness" but framed as checking
+  the response against an arbitrary `context` for contradictions, rather
+  than RAG-specific retrieval grounding. In practice, for this codebase the
+  input population is identical to Faithfulness/ContextPrecision/ContextRecall
+  (any case with `reference_context` populated) and the question it answers
+  — "does this response introduce claims unsupported by/contradicting the
+  given context?" — is not meaningfully different from what Faithfulness
+  already asks. **Omitted.**
+- **Custom expected-behavior criteria** (`deepeval.metrics.GEval`): a
+  natural-language rubric, LLM-judged with chain-of-thought reasoning. This
+  is the one capability with **no existing equivalent** anywhere in the
+  Gate: every deterministic evaluator does literal string/schema matching
+  (`ExactMatchEvaluator`, `RequiredPhraseEvaluator`, `JSONSchemaEvaluator`,
+  ...); every RAGAS metric is a retrieval-grounding question. Nothing in
+  Sprint 1-5 can judge qualitative properties like tone, professionalism,
+  or policy adherence ("does the response avoid making promises about
+  refund timing?"). **Implemented**, as `DeepEvalCriteriaEvaluator`.
+
+**Reason:** The sprint brief explicitly required this comparison
+("compare it against existing RAGAS and deterministic metrics... if it
+substantially duplicates an existing metric, either omit it or document
+clearly why both are retained") and to "avoid duplicate metrics merely to
+increase framework count." Three of the four candidates would have added a
+second framework's opinion on a question Sprint 5 already answers, for the
+same cases, at real per-case LLM cost — that's framework-count inflation,
+not new signal. The fourth fills a genuine gap.
+
+**Alternatives considered:** Implementing all 4 and treating agreement/
+disagreement between RAGAS's and DeepEval's opinions on the same question
+as its own signal (an ensemble/cross-validation approach) — a legitimate
+idea in the abstract, but out of scope for what this sprint asked for and
+not something a Policy Engine exists yet to consume; noted as a possible
+future direction rather than built speculatively. Implementing Hallucination
+specifically (since it's namely distinct from Faithfulness in DeepEval's
+own framing) — rejected because the distinction is in *intent*
+(RAG-specific vs. general-purpose), not in what it would actually measure
+against this codebase's inputs, which are identical either way.
+
+**Trade-off:** If a future need arises for a *general* (non-RAG) hallucination/
+groundedness check — e.g. a non-"rag"-category case with a reference answer
+but no retrieval step, which RAGAS's evaluators don't currently reach
+because nothing populates `retrieved_context` for it — DeepEval's
+Hallucination metric would become non-duplicative and worth revisiting.
+Filed as a known limitation rather than implemented speculatively (see
+PROJECT_STATE.md "Outstanding work").
+
+### 24. `DeepEvalCriteriaEvaluator` is opt-in per case via `case.metadata`; `DeepEvalClient` isolates `deepeval` exactly like `RagasClient` isolates `ragas`
+
+**Decision:** `DeepEvalCriteriaEvaluator.applies_to(case)` returns
+`bool(case.metadata.get("deepeval_criteria"))` — a case with no criteria
+string is simply not applicable, the same data-driven pattern
+`CitationPresenceEvaluator` (Sprint 2) and RAGAS's `_is_rag_case` (Sprint 5)
+both use. The criteria string itself, and two optional per-case overrides
+(`deepeval_criteria_name` for the metric label, `deepeval_threshold` for a
+per-case pass/fail cutoff), all live in `case.metadata` — Quality-Gate-owned
+dataset data, never DeepEval's — satisfying "thresholds owned by Quality
+Gate configuration" even when a threshold varies per case rather than being
+one fixed `Settings` value.
+
+`app/evaluation/deepeval/client.py` is the only module importing `deepeval`
+or constructing the `deepeval.models.OpenAIModel` used purely as the G-Eval
+judge, passing `api_key` explicitly rather than relying on deepeval's own
+`OPENAI_API_KEY` environment-variable convention — this avoids introducing
+a second credential to manage, reusing `AQG_OPENAI_API_KEY` exactly like
+`RagasClient` does. `GEval` metric instances are cached by
+`(name, criteria, evaluation_params, threshold)` since Sprint 6's criteria
+can vary per case (unlike RAGAS's four fixed metrics), so identical
+criteria across many cases in a dataset only builds one `GEval` object.
+
+**Reason:** Mirrors [[Sprint 5 decision 22]] point for point — the
+isolation principle ("only one module imports the framework/builds its
+judge client") and the error-type reuse (`DeepEvalEvaluatorError.error_type`
+reuses `ProviderErrorType`, not a third enum) apply identically regardless
+of which framework is being adapted. Per-case criteria (rather than one
+fixed criteria string in `Settings`, the way RAGAS's thresholds are) is a
+deliberate difference: RAGAS's four metrics ask the same fixed question for
+every case they apply to ("is this faithful", "is context precise"), while
+G-Eval's entire value proposition is a *custom* rubric — fixing it at the
+process level would make it no more useful than the (already-covered)
+answer-relevancy/faithfulness metrics.
+
+**Alternatives considered:** A single fixed `AQG_DEEPEVAL_CRITERIA` setting
+applied to every case — rejected; this would make the evaluator
+uniform across an entire dataset, discarding G-Eval's actual value (letting
+a dataset author write a different rubric per case, e.g. "empathetic tone"
+for support-ticket cases vs. "cites the exact policy clause" for
+compliance-answer cases). Storing criteria in a separate config file keyed
+by case id — rejected as unnecessary indirection; `case.metadata` already
+exists precisely for this kind of per-case evaluator configuration
+(`json_schema`, `required_phrases`, `rag_scenario`, ... all live there
+already).
+
+**Trade-off:** Unlike RAGAS's metrics, `DeepEvalCriteriaEvaluator`
+contributes nothing to a dataset that never sets `deepeval_criteria` on any
+case — even with `AQG_DEEPEVAL_ENABLED=true`, a dataset author has to
+explicitly opt individual cases in. Judged correct: a criteria-less "custom
+criteria" evaluator has nothing meaningful to check, so silently applying a
+generic rubric to every case would produce noise, not signal.
+
+### 25. Evaluator-combination selection is a `frameworks` field on the existing run/evaluate endpoints, backed by a `framework` attribute added to the `Evaluator` protocol — no new CLI, no new runner
+
+**Decision:** `Evaluator` (`app/evaluation/base.py`) gained a `framework: str`
+attribute alongside `name: str`. Every existing evaluator — all 8
+deterministic, all 4 RAGAS, the 1 DeepEval — now exposes it as a class
+attribute. `EvaluationRunner.run`/`run_with_provider`/`evaluate_case` all
+gained an optional `frameworks: set[str] | None` keyword parameter; when
+given, evaluation filters `self._evaluators` down to
+`e.framework in frameworks` before applying `applies_to`/`evaluate`.
+`POST /evaluations/runs` and `POST /rag/evaluate/{case_id}` both gained an
+optional `frameworks` request field threading straight through
+`EvaluationService.run`/`RAGService.evaluate_case` to the runner. `None`
+(the default, and what every Sprint 1-5 caller/test still passes implicitly)
+runs every evaluator the runner was constructed with — byte-identical to
+pre-Sprint-6 behavior.
+
+**Reason:** The sprint brief asked for evaluator selection ("deterministic
+/ ragas / deepeval / combinations") and explicitly preferred API-based
+selection over introducing a new CLI "if that fits the current architecture
+better." It does: this is a FastAPI service with no existing CLI surface
+for running evaluations at all (the closest thing, `uv run pytest`, is a
+test-suite entry point, not a product feature), so a request field is the
+only selection mechanism that fits without inventing a new interface
+category. The `framework` attribute on `Evaluator` was the smallest gap
+that made filtering possible at all: `MetricResult.framework` already
+existed (Sprint 5), but nothing let the runner ask an *evaluator* what
+framework it belonged to without running it first and inspecting the
+result it produced — which would defeat the point of filtering *before*
+calling potentially-expensive/costly evaluators. Adding the attribute is
+the "real limitation Sprint 6 exposes" that justifies touching
+`deterministic.py`/`ragas/evaluator.py`, per the sprint brief's "do not
+redesign... unless Sprint 6 exposes a real limitation" instruction — every
+change to those two files is exactly one class-attribute line added per
+existing evaluator, no logic touched.
+
+**Alternatives considered:** A separate `EvaluationRunner` per framework
+combination, built at startup for every combination someone might request
+— rejected; combinatorial (2^3 = 8 runners for 3 frameworks, worse for
+more) for no benefit over filtering a single evaluator list at call time,
+and would violate "do not duplicate the evaluation runner" directly.
+Encoding framework selection in `case.metadata` instead of a request field
+— rejected; framework selection is a property of *how you want this run
+graded*, not a property of the *case*, so it belongs with `provider` (an
+existing request-level choice) rather than mixed into per-case data meant
+to travel with the dataset. A `--frameworks` CLI flag on some new script —
+rejected per the brief's explicit API-first preference, and because it
+would be a second, redundant way to trigger the same `EvaluationRunner`
+this service already exposes over HTTP.
+
+**Trade-off:** Requesting a framework that isn't enabled process-wide
+(e.g. `"frameworks": ["deepeval"]` when `AQG_DEEPEVAL_ENABLED=false`) is
+not an error — it silently contributes zero evaluators from that
+framework, and a case with zero applicable evaluators vacuously passes
+(the same pre-existing Sprint 1 rule for any case no evaluator applies to).
+This means a caller who typos a framework name or forgets to enable one
+gets a "passed" run rather than a loud failure. Accepted rather than
+raising a 400/422, for consistency with the existing rule that an empty
+`metric_results` list is not itself an error condition anywhere else in
+the Gate; a future Policy Engine sprint is a more natural place to decide
+whether "zero evaluators ran" should ever block a release.

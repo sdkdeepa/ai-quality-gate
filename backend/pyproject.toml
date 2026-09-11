@@ -24,6 +24,10 @@ dependencies = [
     # langchain-core generation. See DECISIONS.md #21.
     "ragas>=0.4.3,<0.5.0",
     "langchain-openai>=0.3.0,<0.4.0",
+    # Sprint 6 (DeepEval integration). Resolved cleanly against the Sprint 5
+    # pins above with no further constraints needed — verified via `uv add`
+    # + full test suite. See DECISIONS.md #23.
+    "deepeval>=4.2.0,<5.0.0",
 ]
 
 [dependency-groups]

@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-09-10 (Sprint 5 complete)
+Last updated: 2026-09-10 (Sprint 6 complete)
 
 ## Current architecture
 
@@ -30,15 +30,20 @@ ai-quality-gate/
         │   ├── case_result.py      # CaseResult
         │   ├── gate_decision.py    # GateDecision
         │   └── golden_dataset.py   # GoldenDataset (name/version/created_at/description/cases) + semver_key
-        ├── evaluation/          # the internal evaluation interface + deterministic/RAGAS plugins
-        │   ├── base.py              # Evaluator protocol (applies_to + evaluate -> MetricResult)
+        ├── evaluation/          # the internal evaluation interface + deterministic/RAGAS/DeepEval plugins
+        │   ├── base.py              # Evaluator protocol (applies_to + evaluate -> MetricResult; framework: str)
         │   ├── types.py             # EvaluationInput, FixtureResponse
         │   ├── deterministic.py     # 8 deterministic evaluators + DEFAULT_EVALUATORS
         │   ├── runner.py            # EvaluationRunner: dataset + provider -> EvaluationRun + CaseResults
-        │   └── ragas/               # Sprint 5 — RAGAS integration, isolated behind the same Evaluator protocol
-        │       ├── client.py            # RagasClient: only module importing `ragas`/building its judge client
-        │       ├── evaluator.py         # RagasFaithfulness/AnswerRelevancy/ContextPrecision/ContextRecallEvaluator
-        │       └── factory.py           # build_ragas_evaluators(settings) -> list[Evaluator], config-gated
+        │   │                        # (frameworks: set[str] | None filters which evaluators run — Sprint 6)
+        │   ├── ragas/               # Sprint 5 — RAGAS integration, isolated behind the same Evaluator protocol
+        │   │   ├── client.py            # RagasClient: only module importing `ragas`/building its judge client
+        │   │   ├── evaluator.py         # RagasFaithfulness/AnswerRelevancy/ContextPrecision/ContextRecallEvaluator
+        │   │   └── factory.py           # build_ragas_evaluators(settings) -> list[Evaluator], config-gated
+        │   └── deepeval/            # Sprint 6 — DeepEval integration, same Evaluator-protocol pattern as ragas/
+        │       ├── client.py            # DeepEvalClient: only module importing `deepeval`/building its judge
+        │       ├── evaluator.py         # DeepEvalCriteriaEvaluator (G-Eval custom-criteria check)
+        │       └── factory.py           # build_deepeval_evaluators(settings) -> list[Evaluator], config-gated
         ├── providers/           # the internal provider interface + provider implementations
         │   ├── types.py             # ProviderRequest, ProviderResponse, ProviderError(Type)
         │   ├── base.py              # Provider protocol (name, model, generate)
@@ -91,19 +96,23 @@ no repository interface per aggregate, no CQRS, no DI container. Just enough
 seams to swap in-memory storage for a real database later without touching
 domain or API code.
 
-**Plugin boundary (now proven twice over):** `app/evaluation/base.py`
+**Plugin boundary (now proven three times over):** `app/evaluation/base.py`
 defines the `Evaluator` protocol — `applies_to(case)` + `evaluate(input) ->
-MetricResult`. The 8 deterministic evaluators in `app/evaluation/deterministic.py`
-were the first implementation of that protocol; the 4 RAGAS evaluators in
-`app/evaluation/ragas/evaluator.py` (Sprint 5) are the second, and neither
-`EvaluationRunner` nor the `Evaluator` protocol itself changed to add them —
-see Sprint 5's decision below. They know nothing about HTTP, datasets-on-disk,
-or release policy — they take an `EvaluationInput` and return a normalized
-`MetricResult`. `EvaluationRunner` composes evaluators against a dataset's
-cases; it does **not** compute a PASS/WARN/BLOCK decision — that remains
-future work for the Gate's policy layer. When DeepEval/OpenAI Evals/Phoenix
-are integrated in a later sprint, they will implement this same `Evaluator`
-protocol side-by-side with the deterministic and RAGAS ones.
+MetricResult` + (since Sprint 6) a `framework: str` attribute. The 8
+deterministic evaluators in `app/evaluation/deterministic.py` were the
+first implementation; the 4 RAGAS evaluators in `app/evaluation/ragas/evaluator.py`
+(Sprint 5) were the second; the 1 DeepEval evaluator in
+`app/evaluation/deepeval/evaluator.py` (Sprint 6) is the third — and
+`EvaluationRunner` itself changed only once across all three (adding the
+`frameworks` filter parameter in Sprint 6, for API-based evaluator-
+combination selection — see [[Sprint 6 decision 25]]), never to
+accommodate a specific framework. They know nothing about HTTP,
+datasets-on-disk, or release policy — they take an `EvaluationInput` and
+return a normalized `MetricResult`. `EvaluationRunner` composes evaluators
+against a dataset's cases; it does **not** compute a PASS/WARN/BLOCK
+decision — that remains future work for the Gate's policy layer. When
+OpenAI Evals/Phoenix are integrated in a later sprint, they will implement
+this same `Evaluator` protocol side-by-side with the rest.
 
 **RAGAS is an evaluation signal provider, not a policy owner (Sprint 5):**
 `app/evaluation/ragas/` adapts RAGAS's `Faithfulness`/`AnswerRelevancy`/
@@ -117,6 +126,21 @@ only ever sees normalized `MetricResult`s with `framework="ragas"`; RAGAS
 never computes a PASS/WARN/BLOCK decision, and thresholds
 (`AQG_RAGAS_*_THRESHOLD`) live in the Gate's own `Settings`, not inside
 RAGAS. See [[Sprint 5 decision 21]] and [[Sprint 5 decision 22]].
+
+**DeepEval adds a qualitative judge, not a duplicate one (Sprint 6):**
+`app/evaluation/deepeval/` adapts DeepEval's `GEval` custom-criteria metric
+behind the same `Evaluator` protocol, following the identical isolation
+pattern as `ragas/` — `app/evaluation/deepeval/client.py` is the only
+module importing `deepeval` or building the `OpenAIModel` used purely as
+its G-Eval judge. Before implementing anything, the sprint compared all
+four "potential areas" DeepEval offers (answer relevancy, faithfulness,
+hallucination, custom criteria) against RAGAS's Sprint 5 metrics and
+shipped only the one with genuinely new signal — see
+[[Sprint 6 decision 23]] for the full comparison and why answer relevancy/
+faithfulness/hallucination were omitted rather than duplicated. Thresholds
+(`AQG_DEEPEVAL_CRITERIA_THRESHOLD`, optionally overridden per-case via
+`case.metadata["deepeval_threshold"]`) live in the Gate's own data, never
+inside DeepEval. See [[Sprint 6 decision 24]].
 
 **Provider boundary (Sprint 3):** `app/providers/base.py` defines the
 `Provider` protocol — `name`, `model`, `generate(ProviderRequest) ->
@@ -143,7 +167,7 @@ with the same 8 deterministic evaluators as everything else — no
 RAG-specific evaluator, no RAG-specific branch in the runner. See
 [[Sprint 4 decision 17]] for exactly where LangChain is used vs. our own code.
 
-## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5)
+## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6)
 
 **Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
@@ -510,9 +534,87 @@ RAG-specific evaluator, no RAG-specific branch in the runner. See
   DeepEval, OpenAI Evals, Phoenix, the PASS/WARN/BLOCK policy engine, a
   regression baseline engine, JSON/HTML report generation, Docker/CI changes.
 
+**Sprint 6 — DeepEval Integration:**
+- `app/evaluation/deepeval/` adds DeepEval's G-Eval custom-criteria metric
+  through the identical adapter pattern Sprint 5 established for RAGAS —
+  same 3-file shape (`client.py`/`evaluator.py`/`factory.py`), same
+  `ProviderErrorType` reuse for infrastructure failures, same
+  `metadata["<framework>_status"]` normalized states
+  (`scored`/`skipped_missing_input`/`infrastructure_error`).
+- **Metric-selection comparison (required before implementing anything):**
+  compared all 4 "potential areas" the sprint listed against Sprint 5's
+  RAGAS metrics and the deterministic evaluators. `AnswerRelevancyMetric`,
+  `FaithfulnessMetric`, and `HallucinationMetric` were all **omitted** — each
+  measures materially the same thing as an existing RAGAS metric
+  (answer-addresses-query, claims-grounded-in-context) on the same case
+  population, and a second framework's opinion on an identical question
+  wasn't judged worth the added complexity/cost this sprint. `GEval`
+  custom-criteria was **implemented** as `DeepEvalCriteriaEvaluator` — the
+  only DeepEval capability with no existing equivalent: every deterministic
+  evaluator does literal string/schema matching, and every RAGAS metric is
+  a retrieval-grounding question; G-Eval is the Gate's first
+  *qualitative/semantic* judge (tone, policy adherence, any natural-language
+  rubric). See [[Sprint 6 decision 23]].
+- `DeepEvalCriteriaEvaluator` is opt-in per case via
+  `case.metadata["deepeval_criteria"]` (a natural-language rubric string) —
+  same data-driven `applies_to` pattern as `CitationPresenceEvaluator`
+  (Sprint 2). Optional per-case overrides: `deepeval_criteria_name` (metric
+  label) and `deepeval_threshold` (overrides the configured default for
+  that case). A case with no `deepeval_criteria` metadata is simply not
+  applicable — the evaluator is never invoked for it, not skipped.
+- `DeepEvalClient` (`app/evaluation/deepeval/client.py`) is the only module
+  importing `deepeval` or building the `OpenAIModel` used purely as
+  DeepEval's G-Eval judge (`deepeval.models.OpenAIModel(api_key=...)`,
+  explicit key — no second `OPENAI_API_KEY` env var, reuses
+  `AQG_OPENAI_API_KEY`). Every SDK/DeepEval exception it can raise is
+  caught and mapped onto the same `ProviderErrorType` vocabulary RAGAS
+  already reuses — no third error-type enum. Constructed `GEval` metric
+  instances are cached by `(name, criteria, evaluation_params, threshold)`
+  signature so repeated calls with the same criteria don't rebuild the
+  metric object. See [[Sprint 6 decision 24]].
+- **Evaluator-combination selection (requirement #4):** `Evaluator` gained
+  a `framework: str` attribute (all 8 deterministic + 4 RAGAS + 1 DeepEval
+  evaluators now expose it); `EvaluationRunner.run`/`run_with_provider`/
+  `evaluate_case` all gained an optional `frameworks: set[str] | None`
+  filter (`None`, the default, preserves exact Sprint 1-5 behavior — every
+  evaluator the runner was constructed with). Chose API-based selection
+  over a new CLI, per the sprint brief's preference: `POST /evaluations/runs`
+  and `POST /rag/evaluate/{case_id}` both gained an optional `frameworks`
+  request field (e.g. `["deterministic", "ragas"]`) that restricts grading
+  to that subset for one run/case without touching process-level
+  `AQG_*_ENABLED` config. Requesting a framework that isn't enabled
+  process-wide is not an error — it just contributes zero evaluators (and
+  therefore a vacuous pass, same rule as any case with no applicable
+  evaluators). See [[Sprint 6 decision 25]].
+- Comparison output (requirement #6) needed **no changes** —
+  `app/api/_view.py`'s `metrics_by_framework()` (Sprint 5) already groups by
+  whatever `framework` values are present, so a case graded by all three
+  now shows `{"deterministic": [...], "ragas": [...], "deepeval": [...]}`
+  automatically.
+- Dependency: `deepeval>=4.2.0,<5.0.0` resolved cleanly against the Sprint 5
+  pins (`ragas`, `langchain-*`) with no further constraints needed —
+  verified via `uv add` + full test suite; `openai` stayed at 2.54.0.
+- 46 new tests (370 total, 4 still self-skipped without live API keys):
+  `DeepEvalClient` exception-mapping/value-parsing/input-translation/metric-
+  caching (mocked — no `deepeval`/`openai` network calls),
+  `DeepEvalCriteriaEvaluator`'s `applies_to`/skip/infrastructure-failure/
+  pass-fail/per-case-override paths, `build_deepeval_evaluators` config-
+  error paths, `EvaluationRunner`'s `frameworks` filter (all 3 frameworks
+  together, single-framework selection, an unknown/disabled framework
+  yielding zero results without erroring, `evaluate_case` respecting the
+  filter too, and Sprint 1-5 default behavior unchanged when `frameworks`
+  is omitted entirely), `create_app()`'s evaluator-count wiring
+  (DeepEval alone, RAGAS+DeepEval together, missing-key fail-fast), and the
+  new API `frameworks` field on both evaluation endpoints. All mocked by
+  default — no DeepEval/OpenAI API calls or charges from the normal test
+  suite.
+- Explicitly out of scope per the sprint plan (deferred, not attempted):
+  OpenAI Evals, Phoenix, the PASS/WARN/BLOCK policy engine, a regression
+  baseline engine, a React dashboard.
+
 ## Current sprint
 
-Sprint 5 — RAGAS Integration: **complete**.
+Sprint 6 — DeepEval Integration: **complete**.
 
 ## Outstanding work (future sprints, not started)
 
@@ -534,6 +636,23 @@ Sprint 5 — RAGAS Integration: **complete**.
   — nothing consumes that distinction yet, since `GateDecision` computation
   doesn't exist yet at all (see the pre-existing Sprint 4 outstanding item
   below).
+- **DeepEval real-provider validation**: same gap as RAGAS above — every
+  DeepEval test mocks the OpenAI SDK boundary; no test has run a real
+  G-Eval judge call against a live key yet.
+- **Gemini-backed DeepEval judging**: `DeepEvalClient` only builds its judge
+  via `deepeval.models.OpenAIModel`; not implemented this sprint —
+  `AQG_DEEPEVAL_ENABLED=true` always requires `AQG_OPENAI_API_KEY`, same
+  constraint as RAGAS.
+- **DeepEval metric selection**: unlike `AQG_RAGAS_METRICS`, there is no
+  `AQG_DEEPEVAL_METRICS` yet — Sprint 6 ships exactly one DeepEval
+  evaluator (G-Eval custom criteria), so a selector would have nothing to
+  select between. Add one if/when a second DeepEval metric is deemed worth
+  shipping (see [[Sprint 6 decision 23]] for why the other three weren't).
+- **Evaluator-combination selection beyond framework granularity**: Sprint
+  6's `frameworks` filter selects whole frameworks
+  (`deterministic`/`ragas`/`deepeval`); there's no way yet to select
+  individual evaluators within a framework (e.g. "ragas_faithfulness but
+  not ragas_context_recall") via the API.
 
 
 - Real-provider smoke validation: run `uv run pytest -v -m smoke` (or a
@@ -545,10 +664,10 @@ Sprint 5 — RAGAS Integration: **complete**.
   pipeline has only been exercised against `DeterministicProvider` so far
   (real retrieval, canned generation); a real generation call through the
   RAG pipeline hasn't been manually validated yet.
-- Framework-backed evaluators (DeepEval, OpenAI Evals) implementing the
-  same `Evaluator` protocol as the deterministic and RAGAS ones. RAGAS
-  itself shipped in Sprint 5; DeepEval/OpenAI Evals remain the natural next
-  signals to add behind the same protocol.
+- Framework-backed evaluators still to add: OpenAI Evals, Phoenix. RAGAS
+  (Sprint 5) and DeepEval's G-Eval (Sprint 6) both ship behind the same
+  `Evaluator` protocol; OpenAI Evals/Phoenix remain the natural next
+  signals to add the same way.
 - Real embeddings in practice: `OpenAIEmbeddings` exists and is wired
   through `AQG_RAG_EMBEDDINGS_PROVIDER=openai`, but hasn't been run
   against the corpus — `DeterministicEmbeddings` is the only embeddings
@@ -664,6 +783,31 @@ curl -X POST http://127.0.0.1:8000/api/v1/rag/evaluate/rag-001 \
   -H "Content-Type: application/json" -d '{}'
 ```
 
+Sprint 6's DeepEval integration (opt-in, disabled by default), plus the
+`frameworks` selection both sprints share:
+
+```bash
+# run only the Sprint 6 / DeepEval test suite (fully mocked, no API key or cost)
+uv run pytest -v tests/evaluation/deepeval/
+
+# start the server with RAGAS + DeepEval both enabled (requires a real
+# AQG_OPENAI_API_KEY — both judges reuse it; incurs real API cost per case scored)
+AQG_RAGAS_ENABLED=true AQG_DEEPEVAL_ENABLED=true AQG_OPENAI_API_KEY=sk-... \
+  uv run uvicorn app.main:app --reload
+
+# evaluate every case in a dataset with every enabled framework (unchanged
+# Sprint 1-5 behavior when "frameworks" is omitted)
+curl -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "customer_support_bot", "dataset_version": "1.1.0"}'
+
+# same, but restricted to deterministic + RAGAS only for this one run -
+# no need to disable AQG_DEEPEVAL_ENABLED process-wide to do this
+curl -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "customer_support_bot", "dataset_version": "1.1.0", "frameworks": ["deterministic", "ragas"]}'
+```
+
 Interactive API docs at `/docs` (OpenAPI at `/openapi.json`).
 
 ## Important environment variables
@@ -698,5 +842,8 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_RAGAS_ANSWER_RELEVANCY_THRESHOLD` | `0.70` | Pass/fail cutoff for the answer-relevancy metric |
 | `AQG_RAGAS_CONTEXT_PRECISION_THRESHOLD` | `0.70` | Pass/fail cutoff for the context-precision metric |
 | `AQG_RAGAS_CONTEXT_RECALL_THRESHOLD` | `0.70` | Pass/fail cutoff for the context-recall metric |
+| `AQG_DEEPEVAL_ENABLED` | `false` | Adds the DeepEval G-Eval criteria evaluator to the runner when `true`. Requires `AQG_OPENAI_API_KEY`; app startup raises `DeepEvalConfigurationError` otherwise |
+| `AQG_DEEPEVAL_LLM_MODEL` | unset (falls back to `AQG_OPENAI_MODEL`) | Judge model DeepEval's G-Eval metric uses |
+| `AQG_DEEPEVAL_CRITERIA_THRESHOLD` | `0.70` | Default pass/fail cutoff for the criteria evaluator; a case can override it via `case.metadata["deepeval_threshold"]` |
 
 Settings are also loadable from a `backend/.env` file (not committed).

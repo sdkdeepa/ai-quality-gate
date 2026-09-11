@@ -16,6 +16,15 @@ class RunEvaluationRequest(BaseModel):
     dataset_name: str
     dataset_version: str | None = None
     provider: Literal["deterministic", "openai", "gemini"] = "deterministic"
+    # Sprint 6 requirement #4: API-based evaluator-combination selection.
+    # None (default) runs every evaluator the app was started with (Sprint
+    # 1-5 behavior, unchanged); a subset like ["deterministic", "ragas"]
+    # restricts which frameworks contribute MetricResults for this run,
+    # regardless of what's enabled at the process level. Requesting a
+    # framework that isn't enabled (e.g. "deepeval" when
+    # AQG_DEEPEVAL_ENABLED=false) just yields zero evaluators from that
+    # framework, not an error - the runner was never given any to filter.
+    frameworks: list[Literal["deterministic", "ragas", "deepeval"]] | None = None
 
 
 def _run_summary(
@@ -48,13 +57,21 @@ def run_evaluation(
     request: RunEvaluationRequest,
     evaluation_service: Annotated[EvaluationService, Depends(get_evaluation_service)],
 ) -> dict:
-    """Run every case in a dataset through the deterministic evaluators.
+    """Run every case in a dataset through the configured evaluators.
 
     `provider` selects the response source: "deterministic" (default) replays
     fixture responses for reproducible tests/CI; "openai"/"gemini" call the
     live API (requires the matching AQG_OPENAI_API_KEY/AQG_GEMINI_API_KEY).
+
+    `frameworks` (Sprint 6) optionally restricts which evaluator frameworks
+    grade this run — e.g. `["deterministic", "ragas"]` to exclude DeepEval
+    for one run without disabling it process-wide. Omit for "every enabled
+    framework" (unchanged Sprint 1-5 behavior).
     """
-    run = evaluation_service.run(request.dataset_name, request.dataset_version, request.provider)
+    frameworks = set(request.frameworks) if request.frameworks is not None else None
+    run = evaluation_service.run(
+        request.dataset_name, request.dataset_version, request.provider, frameworks=frameworks
+    )
     _, results = evaluation_service.get_run(run.id)
     return _run_summary(run, results)
 

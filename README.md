@@ -12,19 +12,22 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 5 — RAGAS Integration: complete.**
+**Sprint 6 — DeepEval Integration: complete.**
 
 The service loads versioned golden datasets from disk and grades
 system-under-test responses with 8 deterministic evaluators (exact/
 required/forbidden-phrase matching, JSON schema compliance, expected-refusal
-detection, citation presence, latency and cost thresholds), plus 4
-RAGAS-backed evaluators (faithfulness, answer relevancy, context precision,
-context recall) for RAG cases — opt-in via `AQG_RAGAS_ENABLED`, disabled by
-default. Responses come from a provider abstraction — a
+detection, citation presence, latency and cost thresholds), 4 RAGAS-backed
+evaluators (faithfulness, answer relevancy, context precision, context
+recall) for RAG cases, and a DeepEval G-Eval custom-criteria evaluator for
+qualitative/semantic checks (tone, policy adherence, or any natural-language
+rubric) — all three opt-in via `AQG_RAGAS_ENABLED`/`AQG_DEEPEVAL_ENABLED`,
+disabled by default, and independently selectable per run via an optional
+`frameworks` request field. Responses come from a provider abstraction — a
 `DeterministicProvider` (fixture-backed, for tests/CI), `OpenAIProvider`,
 and `GeminiProvider` — selected per evaluation run; evaluation logic never
-depends on the OpenAI/Gemini/RAGAS SDKs directly, and provider/evaluator
-failures (timeout, rate limit, unavailable, malformed response,
+depends on the OpenAI/Gemini/RAGAS/DeepEval SDKs directly, and provider/
+evaluator failures (timeout, rate limit, unavailable, malformed response,
 authentication) are normalized rather than raised. A small LangChain +
 ChromaDB RAG pipeline exists as a system under test. See `PROJECT_STATE.md`
 for full capability detail and outstanding work.

@@ -24,6 +24,7 @@ class ExactMatchEvaluator:
     """
 
     name = "exact_match"
+    framework = FRAMEWORK
 
     def applies_to(self, case: EvaluationCase) -> bool:
         return case.expected_answer is not None and case.metadata.get("match_mode") == "exact"
@@ -47,6 +48,7 @@ class RequiredPhraseEvaluator:
     """All phrases in `metadata["required_phrases"]` must appear (case-insensitive)."""
 
     name = "required_phrases"
+    framework = FRAMEWORK
 
     def applies_to(self, case: EvaluationCase) -> bool:
         return bool(case.metadata.get("required_phrases"))
@@ -73,6 +75,7 @@ class ForbiddenPhraseEvaluator:
     """None of `metadata["forbidden_phrases"]` may appear (case-insensitive) in the response."""
 
     name = "forbidden_phrases"
+    framework = FRAMEWORK
 
     def applies_to(self, case: EvaluationCase) -> bool:
         return bool(case.metadata.get("forbidden_phrases"))
@@ -96,6 +99,7 @@ class JSONSchemaEvaluator:
     """Response must parse as JSON and validate against `metadata["json_schema"]`."""
 
     name = "json_schema_compliance"
+    framework = FRAMEWORK
 
     def applies_to(self, case: EvaluationCase) -> bool:
         return bool(case.metadata.get("json_schema"))
@@ -127,6 +131,7 @@ class ExpectedRefusalEvaluator:
     """For REFUSE/UNSUPPORTED cases, the response must contain refusal-style language."""
 
     name = "expected_refusal"
+    framework = FRAMEWORK
 
     DEFAULT_REFUSAL_PHRASES = [
         "i don't have",
@@ -176,6 +181,7 @@ class CitationPresenceEvaluator:
     """Retrieval-grounded cases must come back with at least one retrieved context chunk."""
 
     name = "citation_presence"
+    framework = FRAMEWORK
 
     def applies_to(self, case: EvaluationCase) -> bool:
         return bool(case.reference_context) or bool(case.metadata.get("requires_citation"))
@@ -196,6 +202,7 @@ class LatencyThresholdEvaluator:
     """Response latency must be at or below a threshold (metadata override or a global default)."""
 
     name = "latency_ms"
+    framework = FRAMEWORK
     DEFAULT_MAX_LATENCY_MS = 3000.0
 
     def applies_to(self, case: EvaluationCase) -> bool:
@@ -221,6 +228,7 @@ class CostThresholdEvaluator:
     """Estimated cost must be at or below a threshold (metadata override or a global default)."""
 
     name = "estimated_cost_usd"
+    framework = FRAMEWORK
     DEFAULT_MAX_COST_USD = 0.05
 
     def applies_to(self, case: EvaluationCase) -> bool:
