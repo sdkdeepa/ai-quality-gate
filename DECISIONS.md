@@ -924,3 +924,137 @@ raising a 400/422, for consistency with the existing rule that an empty
 `metric_results` list is not itself an error condition anywhere else in
 the Gate; a future Policy Engine sprint is a more natural place to decide
 whether "zero evaluators ran" should ever block a release.
+
+## Sprint 7 — OpenAI Evals Integration
+
+### 26. The hosted `/v1/evals` API is deliberately never called; "OpenAI Evals Integration" is built as direct, Structured-Outputs-backed grading calls through the Responses API instead
+
+**Decision:** Before writing any code, we checked OpenAI's current
+documentation for the Evals platform, per the sprint's own instruction to
+"inspect current supported OpenAI evaluation patterns" and "avoid
+deprecated APIs unless explicitly documented." We found that OpenAI
+announced on 2026-06-03 that the entire Evals platform — the `/v1/evals`
+API, its graders (`string_check`, `text_similarity`, model/label graders),
+and the dashboard — is being deprecated: read-only for existing users on
+2026-10-31, full shutdown on 2026-11-30. This was surfaced to the user
+before implementation (rather than silently built around), and two paths
+were offered: build the adapter against the still-functional-but-sunsetting
+`/v1/evals` API anyway, or skip it entirely and reimplement the useful
+*grading concepts* as direct model calls. The user chose the latter.
+
+`app/evaluation/openai_evals/client.py` (`OpenAIEvalsAdapter`) therefore
+never imports or calls anything under `/v1/evals`. It uses
+`client.responses.parse(text_format=<pydantic model>, ...)` — the
+Responses API — which OpenAI's own documentation describes as the
+recommended endpoint for all new projects (Chat Completions remains
+supported, just not where new investment goes; the separate Assistants API
+is what's actually sunsetting, 2026-08-26, unrelated to Evals but further
+confirming Responses is the forward-looking surface). Structured Outputs
+replace what the hosted product's label/string-check graders offered: a
+dynamically-built Pydantic model with a `Literal[allowed_labels]` field
+constrains the judge to return exactly one of a case's declared labels,
+enforced by the API itself rather than by parsing free text afterward.
+
+**Reason:** Shipping a new adapter against an API with roughly ten weeks of
+remaining life (as of this sprint) would mean the integration stops
+working before most of the Gate's other work is likely to be revisited,
+and would directly contradict the sprint's own "avoid deprecated APIs"
+instruction — the brief anticipated exactly this kind of check and wanted
+a judgment call made on it, not a checkbox exercise. Reimplementing the
+grading concepts directly costs little extra: RAGAS and DeepEval's
+adapters (Sprint 5/6) already establish that "our own module owns the
+SDK calls and exposes only a normalized result" is the pattern regardless
+of which framework is behind it, and OpenAI's hosted graders were never
+more than a thin dashboard/orchestration layer over "call a model with a
+grading prompt and a constrained output schema" — a capability the
+Responses API already provides directly, without the product wrapper.
+
+**Alternatives considered:** Building `OpenAIEvalsAdapter` against
+`/v1/evals` anyway, clearly documented with the sunset date (the other
+option offered to and available to the user) — a legitimate choice too,
+rejected here only because the user preferred not to invest in it.
+Waiting for OpenAI's replacement ("Datasets") to mature before building
+anything — rejected as unnecessarily blocking; Datasets is a different,
+more interactive/dashboard-first shape, not a drop-in programmatic
+successor, and the sprint's actual need (regression-testable, CI-runnable
+grading) is well served by directly-called Structured Outputs today.
+Using Chat Completions instead of Responses — not deprecated, would have
+worked, but Responses is where OpenAI's own guidance points new code, and
+there was no reason to pick the older surface for brand-new work.
+
+**Trade-off:** `OpenAIEvalsAdapter` is a smaller, less feature-rich
+reimplementation than the actual hosted product was (no dashboard, no
+built-in dataset versioning inside OpenAI's own platform, no
+run-history UI) — but none of that was ever this Gate's dependency to
+begin with; the Gate has its own dataset versioning, run history, and
+result storage (Sprint 1/2), so the hosted product's extra surface would
+have been redundant even before its deprecation. If OpenAI ships a
+programmatic successor to the graders concept later, this adapter's
+`client.py` is the only place that would need to change.
+
+### 27. Two OpenAI-model-graded evaluators cover four requested task areas; no answer-relevancy/faithfulness/hallucination duplicate is added a third time
+
+**Decision:** The sprint asked for coverage of four regression-task areas:
+structured answer correctness, policy compliance, expected-behavior
+classification, and engineering-domain quality cases. Rather than build
+four separate evaluators, each area was compared against what already
+exists (RAGAS's Sprint 5 metrics, DeepEval's G-Eval from Sprint 6, and the
+deterministic evaluators) and grouped by the *shape* of judgment each
+actually needs:
+
+- **Policy compliance** and **expected-behavior classification** and
+  **engineering-domain quality** are all, structurally, "classify this
+  response into one of a small number of discrete categories, using a
+  rubric, and decide whether that category counts as passing." Nothing
+  else in the Gate does closed-set classification with an
+  API-enforced label set — `DeepEvalCriteriaEvaluator` (Sprint 6) produces
+  a single continuous 0-1 score against free-text criteria, not a
+  discrete, auditable "which of these N labels" verdict, and the
+  deterministic `ExpectedRefusalEvaluator` only matches a fixed phrase
+  list rather than judging semantically. One evaluator —
+  `OpenAILabelGraderEvaluator` — serves all three areas, with the label
+  set, passing subset, and rubric supplied per case via
+  `case.metadata`, so "policy compliance" and "engineering-domain
+  quality" are just different label sets fed into the same mechanism, not
+  different code.
+- **Structured answer correctness** is different in kind: a checklist of
+  independent facts to verify, not a single classification or a single
+  holistic score. `OpenAIStructuredCorrectnessEvaluator` grades each
+  expected fact independently and reports the fraction confirmed, which
+  is closer to a rubric/checklist grader than to anything RAGAS or
+  DeepEval currently do (RAGAS's context-precision/recall check
+  retrieval quality specifically, not free-standing fact correctness;
+  DeepEval's G-Eval gives one number for the whole response, not a
+  per-fact breakdown).
+
+No third evaluator repeating "does this response's claims hold up"
+(a RAGAS-Faithfulness/DeepEval-Hallucination-shaped check) was added,
+consistent with [[Sprint 6 decision 23]]'s reasoning: a third framework's
+opinion on a question two evaluators already answer is framework-count
+inflation, not new signal.
+
+**Reason:** The sprint brief explicitly required this comparison ("compare
+it against existing RAGAS and DeepEval metrics... avoid duplicate metrics
+merely to increase framework count") for the same reason [[Sprint 6
+decision 23]] did. Grouping by mechanism (classification vs. checklist)
+rather than by the brief's four labels avoided building near-duplicate
+evaluators that differ only in their prompt text.
+
+**Alternatives considered:** Four separate evaluator classes, one per
+requested area — rejected; `OpenAILabelGraderEvaluator` already generalizes
+across three of them via case-supplied labels/rubric, and three
+copy-pasted classes differing only in a docstring would be exactly the
+kind of framework-count inflation the brief warned against.
+An OpenAI-backed faithfulness/hallucination evaluator (to have "an OpenAI
+opinion" alongside RAGAS's/DeepEval's) — rejected per the reasoning above;
+noted as a possible future ensemble/cross-validation direction in
+PROJECT_STATE.md rather than built speculatively, same as
+[[Sprint 6 decision 23]]'s treatment of the same idea.
+
+**Trade-off:** `OpenAILabelGraderEvaluator`'s generality means it has no
+opinion of its own about what "compliant" or "meets engineering standards"
+means — every case using it must supply its own labels and rubric via
+metadata. This is deliberate (the same trade-off `DeepEvalCriteriaEvaluator`
+already accepted in Sprint 6): a criteria-less classifier would have
+nothing meaningful to check, so requiring explicit per-case configuration
+is correct rather than a gap.

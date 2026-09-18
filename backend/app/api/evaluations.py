@@ -24,7 +24,7 @@ class RunEvaluationRequest(BaseModel):
     # framework that isn't enabled (e.g. "deepeval" when
     # AQG_DEEPEVAL_ENABLED=false) just yields zero evaluators from that
     # framework, not an error - the runner was never given any to filter.
-    frameworks: list[Literal["deterministic", "ragas", "deepeval"]] | None = None
+    frameworks: list[Literal["deterministic", "ragas", "deepeval", "openai_evals"]] | None = None
 
 
 def _run_summary(

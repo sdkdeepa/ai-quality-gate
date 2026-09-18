@@ -27,7 +27,7 @@ class EvaluateRAGCaseRequest(BaseModel):
     provider: ProviderName = "deterministic"
     # Sprint 6: same evaluator-combination selection as
     # POST /evaluations/runs — None (default) runs every enabled framework.
-    frameworks: list[Literal["deterministic", "ragas", "deepeval"]] | None = None
+    frameworks: list[Literal["deterministic", "ragas", "deepeval", "openai_evals"]] | None = None
 
 
 @router.post("/query")

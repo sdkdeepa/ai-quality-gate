@@ -12,16 +12,20 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 6 — DeepEval Integration: complete.**
+**Sprint 7 — OpenAI Evals Integration: complete.**
 
 The service loads versioned golden datasets from disk and grades
 system-under-test responses with 8 deterministic evaluators (exact/
 required/forbidden-phrase matching, JSON schema compliance, expected-refusal
 detection, citation presence, latency and cost thresholds), 4 RAGAS-backed
 evaluators (faithfulness, answer relevancy, context precision, context
-recall) for RAG cases, and a DeepEval G-Eval custom-criteria evaluator for
+recall) for RAG cases, a DeepEval G-Eval custom-criteria evaluator for
 qualitative/semantic checks (tone, policy adherence, or any natural-language
-rubric) — all three opt-in via `AQG_RAGAS_ENABLED`/`AQG_DEEPEVAL_ENABLED`,
+rubric), and two OpenAI-model-graded evaluators (closed-set label
+classification for policy/behavior/quality checks, and fact-checklist
+scoring for structured answer correctness — built directly on OpenAI's
+Responses API, not the now-deprecated hosted Evals product) — all three
+opt-in via `AQG_RAGAS_ENABLED`/`AQG_DEEPEVAL_ENABLED`/`AQG_OPENAI_EVALS_ENABLED`,
 disabled by default, and independently selectable per run via an optional
 `frameworks` request field. Responses come from a provider abstraction — a
 `DeterministicProvider` (fixture-backed, for tests/CI), `OpenAIProvider`,
