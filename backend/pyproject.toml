@@ -28,6 +28,8 @@ dependencies = [
     # pins above with no further constraints needed — verified via `uv add`
     # + full test suite. See DECISIONS.md #23.
     "deepeval>=4.2.0,<5.0.0",
+    "arize-phoenix-otel>=0.17.0,<0.18.0",
+    "openinference-semantic-conventions>=0.1.0,<0.2.0",
 ]
 
 [dependency-groups]

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from openai import OpenAI
+from opentelemetry.trace import Tracer
 
 from app.core.config import Settings
 from app.core.exceptions import ProviderConfigurationError
@@ -10,7 +11,9 @@ from app.rag.retriever import Retriever
 from app.rag.vector_store import ChromaVectorStore
 
 
-def build_retriever(settings: Settings, backend_root: Path) -> tuple[ChromaVectorStore, Retriever]:
+def build_retriever(
+    settings: Settings, backend_root: Path, *, tracer: Tracer | None = None
+) -> tuple[ChromaVectorStore, Retriever]:
     """Wires embeddings -> ChromaVectorStore -> ingestion -> Retriever from Settings.
 
     Called once at `create_app()` time, mirroring `DatasetService.load_all()`:
@@ -32,6 +35,7 @@ def build_retriever(settings: Settings, backend_root: Path) -> tuple[ChromaVecto
         vector_store,
         top_k=settings.rag_top_k,
         relevance_threshold=settings.rag_relevance_threshold,
+        tracer=tracer,
     )
     return vector_store, retriever
 

@@ -15,6 +15,7 @@ from app.evaluation.deterministic import DEFAULT_EVALUATORS
 from app.evaluation.openai_evals.factory import build_openai_evals_evaluators
 from app.evaluation.ragas.factory import build_ragas_evaluators
 from app.evaluation.runner import EvaluationRunner
+from app.observability.tracing import configure_tracing
 from app.providers.factory import ProviderFactory
 from app.rag.factory import build_retriever
 from app.repositories.in_memory import InMemoryCaseResultStore, InMemoryRepository
@@ -52,6 +53,16 @@ def create_app() -> FastAPI:
     app.state.dataset_service.load_all()
 
     app.state.case_result_store = InMemoryCaseResultStore()
+    # Sprint 9 — Arize Phoenix Observability. Built once and threaded into
+    # every instrumented component by constructor injection (not global
+    # OTel state — see `configure_tracing`'s docstring for why). Disabled
+    # or failed setup both fall back to OpenTelemetry's own no-op tracer,
+    # so nothing below needs to branch on whether tracing actually worked.
+    app.state.tracer = configure_tracing(
+        enabled=settings.tracing_enabled,
+        collector_endpoint=settings.phoenix_collector_endpoint,
+        project_name=settings.phoenix_project_name,
+    )
     # Sprint 5/6/7: the runner's evaluator list is the only thing that
     # changes to add a framework — DEFAULT_EVALUATORS (deterministic) plus
     # whatever build_ragas_evaluators(settings)/build_deepeval_evaluators(settings)/
@@ -64,7 +75,7 @@ def create_app() -> FastAPI:
         + build_deepeval_evaluators(settings)
         + build_openai_evals_evaluators(settings)
     )
-    app.state.evaluation_runner = EvaluationRunner(evaluators=evaluators)
+    app.state.evaluation_runner = EvaluationRunner(evaluators=evaluators, tracer=app.state.tracer)
     app.state.provider_factory = ProviderFactory(settings, app.state.dataset_service)
     app.state.evaluation_service = EvaluationService(
         dataset_service=app.state.dataset_service,
@@ -74,7 +85,9 @@ def create_app() -> FastAPI:
         provider_factory=app.state.provider_factory,
     )
 
-    app.state.rag_vector_store, app.state.rag_retriever = build_retriever(settings, BACKEND_ROOT)
+    app.state.rag_vector_store, app.state.rag_retriever = build_retriever(
+        settings, BACKEND_ROOT, tracer=app.state.tracer
+    )
     app.state.rag_service = RAGService(
         retriever=app.state.rag_retriever,
         vector_store=app.state.rag_vector_store,
