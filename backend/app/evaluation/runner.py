@@ -58,6 +58,7 @@ class EvaluationRunner:
         self, dataset: GoldenDataset, provider: Provider, *, frameworks: set[str] | None = None
     ) -> tuple[EvaluationRun, list[CaseResult]]:
         run = EvaluationRun(
+            dataset_name=dataset.name,
             dataset_version=dataset.version,
             provider=provider.name,
             model=provider.model,

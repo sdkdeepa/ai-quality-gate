@@ -3,12 +3,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from app.api import datasets, evaluations, health, rag, status
+from app.api import datasets, evaluations, gate, health, rag, status
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware
 from app.domain import EvaluationCase, EvaluationRun, GoldenDataset
+from app.domain.release_policy import default_policy
 from app.evaluation.deepeval.factory import build_deepeval_evaluators
 from app.evaluation.deterministic import DEFAULT_EVALUATORS
 from app.evaluation.openai_evals.factory import build_openai_evals_evaluators
@@ -17,8 +18,10 @@ from app.evaluation.runner import EvaluationRunner
 from app.providers.factory import ProviderFactory
 from app.rag.factory import build_retriever
 from app.repositories.in_memory import InMemoryCaseResultStore, InMemoryRepository
+from app.repositories.sqlite import BaselineRepository, GateDecisionRepository, PolicyRepository
 from app.services.dataset_service import DatasetService
 from app.services.evaluation_service import EvaluationService
+from app.services.policy_service import PolicyService
 from app.services.rag_service import RAGService
 from app.services.status_service import StatusService
 
@@ -81,6 +84,28 @@ def create_app() -> FastAPI:
         rag_dataset_name=settings.rag_dataset_name,
     )
 
+    # Sprint 8 — Release Policy Engine and Regression Baselines. SQLite-
+    # backed (requirement #7); relative paths resolve against the backend
+    # root, same convention as dataset_dir/rag_chroma_dir.
+    policy_db_path = settings.policy_db_path
+    if policy_db_path != ":memory:" and not Path(policy_db_path).is_absolute():
+        policy_db_path = str(BACKEND_ROOT / policy_db_path)
+    app.state.policy_repository = PolicyRepository(policy_db_path)
+    app.state.baseline_repository = BaselineRepository(policy_db_path)
+    app.state.gate_decision_repository = GateDecisionRepository(policy_db_path)
+    # Seed a permissive default policy on first run only — never overwrite
+    # whatever policy is already registered (e.g. from a prior process, or
+    # one an operator configured via POST /api/v1/gate/policies).
+    if app.state.policy_repository.get_active() is None:
+        app.state.policy_repository.add(default_policy())
+    app.state.policy_service = PolicyService(
+        run_repository=app.state.run_repository,
+        case_result_store=app.state.case_result_store,
+        policy_repository=app.state.policy_repository,
+        baseline_repository=app.state.baseline_repository,
+        gate_decision_repository=app.state.gate_decision_repository,
+    )
+
     app.add_middleware(RequestIDMiddleware)
     register_exception_handlers(app)
 
@@ -89,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(datasets.router, prefix=settings.api_v1_prefix)
     app.include_router(evaluations.router, prefix=settings.api_v1_prefix)
     app.include_router(rag.router, prefix=settings.api_v1_prefix)
+    app.include_router(gate.router, prefix=settings.api_v1_prefix)
 
     return app
 

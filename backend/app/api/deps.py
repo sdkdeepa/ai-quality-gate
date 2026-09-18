@@ -2,6 +2,7 @@ from fastapi import Request
 
 from app.services.dataset_service import DatasetService
 from app.services.evaluation_service import EvaluationService
+from app.services.policy_service import PolicyService
 from app.services.rag_service import RAGService
 from app.services.status_service import StatusService
 
@@ -20,3 +21,7 @@ def get_evaluation_service(request: Request) -> EvaluationService:
 
 def get_rag_service(request: Request) -> RAGService:
     return request.app.state.rag_service
+
+
+def get_policy_service(request: Request) -> PolicyService:
+    return request.app.state.policy_service
