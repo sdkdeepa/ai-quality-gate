@@ -7,7 +7,12 @@ from app.domain import EvaluationRun, RunStatus
 
 
 def test_creates_run_with_defaults():
-    run = EvaluationRun(dataset_version="v1.0.0", provider="deterministic", model="stub-model")
+    run = EvaluationRun(
+        dataset_name="test_dataset",
+        dataset_version="v1.0.0",
+        provider="deterministic",
+        model="stub-model",
+    )
 
     assert run.id
     assert run.status == RunStatus.PENDING
@@ -20,6 +25,7 @@ def test_rejects_completed_before_started():
 
     with pytest.raises(ValidationError):
         EvaluationRun(
+            dataset_name="test_dataset",
             dataset_version="v1.0.0",
             provider="deterministic",
             model="stub-model",
@@ -33,6 +39,7 @@ def test_accepts_completed_after_started():
     completed = started + timedelta(minutes=5)
 
     run = EvaluationRun(
+        dataset_name="test_dataset",
         dataset_version="v1.0.0",
         provider="deterministic",
         model="stub-model",
@@ -46,4 +53,19 @@ def test_accepts_completed_after_started():
 
 def test_rejects_blank_dataset_version():
     with pytest.raises(ValidationError):
-        EvaluationRun(dataset_version="  ", provider="deterministic", model="stub-model")
+        EvaluationRun(
+            dataset_name="test_dataset",
+            dataset_version="  ",
+            provider="deterministic",
+            model="stub-model",
+        )
+
+
+def test_rejects_blank_dataset_name():
+    with pytest.raises(ValidationError):
+        EvaluationRun(
+            dataset_name="  ",
+            dataset_version="v1.0.0",
+            provider="deterministic",
+            model="stub-model",
+        )

@@ -10,6 +10,12 @@ class EvaluationRun(BaseModel):
     """A single execution of an evaluation dataset against a provider/model."""
 
     id: str = Field(default_factory=lambda: str(uuid4()))
+    # Sprint 8: needed to scope baseline lookups (`BaselineRepository.get_latest_for_dataset`)
+    # — a GoldenDataset's identity is name+version together
+    # (`GoldenDataset.id`), but only the version was recorded here through
+    # Sprint 7. A real gap Sprint 8 exposes, not a redesign: `runner.py`
+    # already has `dataset.name` in hand when constructing this.
+    dataset_name: str = Field(min_length=1)
     dataset_version: str = Field(min_length=1)
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
@@ -17,7 +23,7 @@ class EvaluationRun(BaseModel):
     completed_at: datetime | None = None
     status: RunStatus = RunStatus.PENDING
 
-    @field_validator("dataset_version", "provider", "model")
+    @field_validator("dataset_name", "dataset_version", "provider", "model")
     @classmethod
     def _not_blank(cls, value: str) -> str:
         stripped = value.strip()

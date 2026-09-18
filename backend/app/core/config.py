@@ -68,6 +68,21 @@ class Settings(BaseSettings):
     openai_evals_llm_model: str | None = None  # falls back to openai_model when unset
     openai_evals_structured_correctness_threshold: float = 0.80
 
+    # Sprint 8 — Release Policy Engine and Regression Baselines. SQLite
+    # file path for policies/baselines/gate decisions (requirement #7);
+    # relative paths resolve against the backend root, same convention as
+    # `dataset_dir`/`rag_chroma_dir`. Defaults to ":memory:" (no real file,
+    # nothing persists across restarts) for the same reason RAGAS/DeepEval/
+    # OpenAI-Evals default to *_enabled=False — an unconfigured install
+    # shouldn't silently write a database file, and `Settings` is process-
+    # cached (`@lru_cache` on `get_settings`), so every test's `create_app()`
+    # call would otherwise share one real on-disk file across the entire
+    # test session. Each `create_app()` call still builds its own fresh
+    # `:memory:` connection, so this costs nothing in isolation even though
+    # the cached `Settings` object itself is shared. Set a real path (e.g.
+    # `data/quality_gate.db`) to get actual persistence across restarts.
+    policy_db_path: str = ":memory:"
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -12,7 +12,7 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 7 — OpenAI Evals Integration: complete.**
+**Sprint 8 — Release Policy Engine and Regression Baselines: complete.**
 
 The service loads versioned golden datasets from disk and grades
 system-under-test responses with 8 deterministic evaluators (exact/
@@ -32,7 +32,13 @@ disabled by default, and independently selectable per run via an optional
 and `GeminiProvider` — selected per evaluation run; evaluation logic never
 depends on the OpenAI/Gemini/RAGAS/DeepEval SDKs directly, and provider/
 evaluator failures (timeout, rate limit, unavailable, malformed response,
-authentication) are normalized rather than raised. A small LangChain +
+authentication) are normalized rather than raised. On top of all of that,
+a platform-owned release Policy Engine (`app/policy/engine.py`) — the only
+place PASS/WARN/BLOCK is ever computed — turns a run's results plus a
+configurable `ReleasePolicy` and an optional approved `Baseline` into an
+auditable `GateDecision`, persisted to SQLite (`AQG_POLICY_DB_PATH`)
+behind the API's `/gate/*` endpoints (run gate, inspect/list decisions,
+approve baselines, compare runs, manage policies). A small LangChain +
 ChromaDB RAG pipeline exists as a system under test. See `PROJECT_STATE.md`
 for full capability detail and outstanding work.
 
