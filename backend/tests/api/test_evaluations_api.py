@@ -135,6 +135,24 @@ def test_run_evaluation_with_disabled_framework_yields_no_error_and_no_results_f
     assert body["passed_count"] == body["case_count"]
 
 
+def test_run_evaluation_accepts_openai_evals_as_a_frameworks_value(client):
+    """Sprint 7: 'openai_evals' is a valid frameworks entry (request schema
+    validation), same disabled-by-default-is-not-an-error behavior as the
+    other opt-in frameworks in this test environment."""
+    response = client.post(
+        "/api/v1/evaluations/runs",
+        json={
+            "dataset_name": "customer_support_bot",
+            "dataset_version": "1.1.0",
+            "frameworks": ["openai_evals"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["passed_count"] == body["case_count"]
+
+
 def test_run_with_explicit_deterministic_provider_matches_default(client):
     response = client.post(
         "/api/v1/evaluations/runs",

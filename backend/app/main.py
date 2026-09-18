@@ -11,6 +11,7 @@ from app.core.middleware import RequestIDMiddleware
 from app.domain import EvaluationCase, EvaluationRun, GoldenDataset
 from app.evaluation.deepeval.factory import build_deepeval_evaluators
 from app.evaluation.deterministic import DEFAULT_EVALUATORS
+from app.evaluation.openai_evals.factory import build_openai_evals_evaluators
 from app.evaluation.ragas.factory import build_ragas_evaluators
 from app.evaluation.runner import EvaluationRunner
 from app.providers.factory import ProviderFactory
@@ -48,15 +49,17 @@ def create_app() -> FastAPI:
     app.state.dataset_service.load_all()
 
     app.state.case_result_store = InMemoryCaseResultStore()
-    # Sprint 5/6: the runner's evaluator list is the only thing that changes
-    # to add a framework — DEFAULT_EVALUATORS (deterministic) plus whatever
-    # build_ragas_evaluators(settings)/build_deepeval_evaluators(settings)
-    # return ([] when the corresponding AQG_*_ENABLED is unset/false, the
-    # default for both). EvaluationRunner itself is unmodified since Sprint 4.
+    # Sprint 5/6/7: the runner's evaluator list is the only thing that
+    # changes to add a framework — DEFAULT_EVALUATORS (deterministic) plus
+    # whatever build_ragas_evaluators(settings)/build_deepeval_evaluators(settings)/
+    # build_openai_evals_evaluators(settings) return ([] when the
+    # corresponding AQG_*_ENABLED is unset/false, the default for all
+    # three). EvaluationRunner itself is unmodified since Sprint 4.
     evaluators = (
         list(DEFAULT_EVALUATORS)
         + build_ragas_evaluators(settings)
         + build_deepeval_evaluators(settings)
+        + build_openai_evals_evaluators(settings)
     )
     app.state.evaluation_runner = EvaluationRunner(evaluators=evaluators)
     app.state.provider_factory = ProviderFactory(settings, app.state.dataset_service)

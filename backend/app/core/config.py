@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     deepeval_llm_model: str | None = None  # falls back to openai_model when unset
     deepeval_criteria_threshold: float = 0.70
 
+    # Sprint 7 — OpenAI-model-graded evaluation. Disabled by default, same
+    # rationale as RAGAS/DeepEval. Deliberately does NOT call OpenAI's
+    # hosted Evals API (/v1/evals) — that product is itself deprecated
+    # (read-only 2026-10-31, shut down 2026-11-30); this reimplements the
+    # useful grading concepts directly via the Responses API. See
+    # DECISIONS.md #26/#27. Judge reuses AQG_OPENAI_API_KEY, same as RAGAS/
+    # DeepEval.
+    openai_evals_enabled: bool = False
+    openai_evals_llm_model: str | None = None  # falls back to openai_model when unset
+    openai_evals_structured_correctness_threshold: float = 0.80
+
 
 @lru_cache
 def get_settings() -> Settings:
