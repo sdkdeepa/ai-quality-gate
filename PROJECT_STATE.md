@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-09-17 (Sprint 7 complete)
+Last updated: 2026-09-18 (Sprint 8 complete)
 
 ## Current architecture
 
@@ -28,7 +28,9 @@ ai-quality-gate/
         │   ├── evaluation_run.py   # EvaluationRun
         │   ├── metric_result.py    # MetricResult
         │   ├── case_result.py      # CaseResult
-        │   ├── gate_decision.py    # GateDecision
+        │   ├── gate_decision.py    # GateDecision, RegressionSummary (Sprint 8)
+        │   ├── release_policy.py   # ReleasePolicy, RequiredMetricPolicy, default_policy() (Sprint 8)
+        │   ├── baseline.py         # Baseline (Sprint 8)
         │   └── golden_dataset.py   # GoldenDataset (name/version/created_at/description/cases) + semver_key
         ├── evaluation/          # the internal evaluation interface + deterministic/RAGAS/DeepEval/OpenAI-Evals plugins
         │   ├── base.py              # Evaluator protocol (applies_to + evaluate -> MetricResult; framework: str)
@@ -68,14 +70,18 @@ ai-quality-gate/
         │   ├── pipeline.py          # RAGPipeline: query -> retrieve -> prompt -> Provider -> RAGAnswer
         │   ├── provider_adapter.py  # RAGProvider(Provider): makes the pipeline itself a Provider
         │   └── factory.py           # build_retriever(settings): wires embeddings/store/ingestion
+        ├── policy/              # release policy engine (Sprint 8) — the ONLY place PASS/WARN/BLOCK is computed
+        │   └── engine.py            # PolicyEngine.decide(); aggregate_metrics_for_run/framework_errors_for_run/pass_rate_for_run
         ├── repositories/       # storage abstraction
         │   ├── base.py             # Repository protocol
-        │   └── in_memory.py        # InMemoryRepository[T], InMemoryCaseResultStore
+        │   ├── in_memory.py        # InMemoryRepository[T], InMemoryCaseResultStore
+        │   └── sqlite.py           # SQLiteRepository[T] + Policy/Baseline/GateDecisionRepository (Sprint 8)
         ├── services/           # application/orchestration layer
         │   ├── status_service.py     # assembles /api/v1/status payload
         │   ├── dataset_service.py    # load/validate/list/get datasets + fixtures from disk
         │   ├── evaluation_service.py # orchestrates dataset -> provider factory -> runner -> repositories
-        │   └── rag_service.py        # orchestrates RAG query / chunk inspection / evaluate-a-case
+        │   ├── rag_service.py        # orchestrates RAG query / chunk inspection / evaluate-a-case
+        │   └── policy_service.py     # Sprint 8: decide/approve-baseline/compare-runs/policy registration
         ├── api/                 # HTTP layer (FastAPI routers)
         │   ├── deps.py              # FastAPI dependency providers
         │   ├── _view.py             # metrics_by_framework(): groups a CaseResult's MetricResults by framework
@@ -83,7 +89,8 @@ ai-quality-gate/
         │   ├── status.py            # GET /api/v1/status
         │   ├── datasets.py          # GET /api/v1/datasets, GET /api/v1/datasets/{name}/{version}
         │   ├── evaluations.py       # POST /api/v1/evaluations/runs, GET /api/v1/evaluations/runs/{id}
-        │   └── rag.py                # POST /rag/query, GET /rag/chunks, POST /rag/evaluate/{case_id}
+        │   ├── rag.py                # POST /rag/query, GET /rag/chunks, POST /rag/evaluate/{case_id}
+        │   └── gate.py                # Sprint 8: /gate/decisions, /gate/baselines, /gate/compare, /gate/policies
         └── core/                 # cross-cutting concerns
             ├── config.py            # Settings (env-var driven, AQG_ prefix; dataset_dir + provider config)
             ├── context.py           # request-id ContextVar
@@ -161,6 +168,22 @@ the full deprecation-avoidance rationale and [[Sprint 7 decision 27]] for
 the metric-comparison against RAGAS/DeepEval that led to these two (and
 not, e.g., a third answer-relevancy or faithfulness evaluator).
 
+**The Policy Engine is the ONLY place PASS/WARN/BLOCK is computed (Sprint 8):**
+`app/policy/engine.py`'s `PolicyEngine` sits above every `Evaluator` in
+the layering, not beside them — it consumes `CaseResult`s (which already
+carry every framework's `MetricResult`s) plus a `ReleasePolicy` and an
+optional `Baseline`, and produces one `GateDecision`. No evaluator,
+framework adapter, or provider has ever computed a release decision, and
+that remains true after this sprint: `app/evaluation/` and `app/providers/`
+are entirely unaware `app/policy/` exists. A "required metric" in a policy
+is identified purely by `MetricResult.metric_name` string matching — the
+Policy Engine has no framework-specific logic at all, so it works
+identically whether the required metric is a deterministic evaluator, a
+RAGAS metric, DeepEval's criteria check, or an OpenAI-Evals-concept grader.
+See [[Sprint 8 decision 28]] for the full design (why several checks are
+hard-BLOCK-only while others are policy-configurable) and
+[[Sprint 8 decision 29]] for the SQLite persistence approach.
+
 **Provider boundary (Sprint 3):** `app/providers/base.py` defines the
 `Provider` protocol — `name`, `model`, `generate(ProviderRequest) ->
 ProviderResponse`. `DeterministicProvider`, `OpenAIProvider`, and
@@ -186,7 +209,7 @@ with the same 8 deterministic evaluators as everything else — no
 RAG-specific evaluator, no RAG-specific branch in the runner. See
 [[Sprint 4 decision 17]] for exactly where LangChain is used vs. our own code.
 
-## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7)
+## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7 + Sprint 8)
 
 **Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
@@ -703,9 +726,98 @@ RAG-specific evaluator, no RAG-specific branch in the runner. See
   engine, a React dashboard, OpenAI's actual hosted Evals product (by
   design — see above).
 
+**Sprint 8 — Release Policy Engine and Regression Baselines:**
+- `app/policy/engine.py`'s `PolicyEngine` is the first and only thing that
+  ever computes PASS/WARN/BLOCK — see the architecture note above. It
+  takes an `EvaluationRun` + that run's `CaseResult`s + a `ReleasePolicy` +
+  an optional `Baseline`, and returns one `GateDecision`. Framework-
+  agnostic throughout: it classifies every `MetricResult` into exactly one
+  of `scored`/`skipped`/`infrastructure_error` using only the universal
+  `metadata["error_type"]`/`metadata["<framework>_status"]` conventions
+  Sprint 5/6/7 already established — no `if framework == "ragas"` branches
+  anywhere in the engine.
+- **Vacuous-PASS guard (the sprint's own explicit requirement, implemented
+  unconditionally, not just per required-metric):** if a run produced
+  literally zero `MetricResult`s across every case, `PolicyEngine` BLOCKs
+  with an explicit reason, regardless of what `required_metrics` says —
+  an empty `required_metrics` list is a valid, permissive policy
+  configuration, not license to vacuously PASS a run where nothing was
+  ever actually checked.
+- **`ReleasePolicy`** (`app/domain/release_policy.py`) covers every
+  requested dimension: `required_metrics` (each a `RequiredMetricPolicy`
+  with an optional aggregate `min_score`, plus separate `on_missing`/
+  `on_infrastructure_failure` actions), `min_pass_rate`,
+  `critical_case_action`, `max_regression_tolerance` +
+  `regression_action`, and `latency_budget_ms`/`cost_budget_usd` each with
+  their own action. `min_pass_rate` misses and a required metric failing
+  its own `min_score` are always hard BLOCKs (not policy-configurable);
+  everything else (critical case handling, regression, budgets, missing/
+  infra-failed required metrics) has a configurable action — see
+  [[Sprint 8 decision 28]] for why that split is where it is.
+- **`Baseline`** (`app/domain/baseline.py`): an approved run's pass rate +
+  aggregate metrics, auto-versioned (1, 2, 3, ...) per dataset name by
+  `BaselineRepository.approve`. Comparing a run against the dataset's
+  latest baseline produces a `RegressionSummary` (pass-rate delta,
+  per-metric deltas, `new_failures`/`recovered_failures` — a required
+  metric's own `min_score` decides "failing" for that classification).
+  No baseline yet for a dataset means no regression check runs at all —
+  never itself a reason to block or pass.
+- **`GateDecision`** (extended, not replaced — see below) is the full audit
+  trail requirement #6 asked for: `run_id`, `dataset_version`, `provider`,
+  `model`, `policy_id`, `policy_version`, `status`, `reasons`,
+  `aggregate_metrics`, `critical_failures`, `framework_errors` (infra-
+  failure counts per metric — kept structurally separate from
+  `aggregate_metrics` so the audit trail can never confuse "the framework
+  broke" with "the quality was bad"), `regression_summary`,
+  `baseline_version`. `EvaluationRun` gained a required `dataset_name`
+  field this sprint (only 2 construction sites in the whole codebase,
+  both updated) — needed so baseline lookups can be scoped by dataset
+  name instead of only dataset version.
+- **Persistence** (requirement #7): `app/repositories/sqlite.py`'s
+  `SQLiteRepository[T]` implements the exact same `add`/`get`/`list`/
+  `delete`/`count` contract as `InMemoryRepository[T]` — a drop-in swap,
+  storing each item as a JSON blob keyed by its own `id`. One connection
+  held open for the repository's lifetime plus a lock (not a fresh
+  connection per call — `:memory:` databases don't share data across
+  connections, a real bug caught and fixed during this sprint) makes it
+  safe to share across FastAPI's threadpool. `PolicyRepository`,
+  `BaselineRepository` (owns version-assignment), and
+  `GateDecisionRepository` (`list_for_run`/`list_history`) add narrow
+  query methods on top. `AQG_POLICY_DB_PATH` defaults to `":memory:"` —
+  same "disabled/unconfigured by default" rationale as RAGAS/DeepEval/
+  OpenAI-Evals, and avoids every test's `create_app()` call sharing one
+  real on-disk file (`Settings` is process-cached). See
+  [[Sprint 8 decision 29]].
+- **API** (requirement #8, `app/api/gate.py`, `PolicyService`): `POST
+  /gate/decisions` (run gate), `GET /gate/decisions/{id}` (inspect), `GET
+  /gate/decisions?run_id=&limit=` (list history, optionally filtered),
+  `POST /gate/baselines` (approve baseline), `GET /gate/baselines?dataset_name=`,
+  `GET /gate/compare?run_id_a=&run_id_b=` (direct run-vs-run diff,
+  independent of any policy or approved baseline), plus `POST /gate/policies`
+  / `GET /gate/policies/active` / `GET /gate/policies/{id}` / `GET
+  /gate/policies` to register and inspect policies. A permissive
+  `default_policy()` is seeded once at startup if none is registered yet
+  (never overwrites an existing one).
+- 83 new tests (503 total, 5 still self-skipped without live API keys):
+  every named scenario from the sprint's own test list (PASS, WARN, BLOCK,
+  critical block, regression block, latency block, cost block, evaluator
+  infrastructure failure — block/warn/ignore — zero-evaluator execution,
+  required evaluator disabled/unavailable/skipped-only, optional evaluator
+  disabled) has at least one dedicated test in `tests/policy/test_engine.py`,
+  plus `SQLiteRepository`/`PolicyRepository`/`BaselineRepository`/
+  `GateDecisionRepository` tests (including the `:memory:`-isolation bug
+  and file-backed persistence across repository instances),
+  `ReleasePolicy`/`Baseline` domain validation tests, and full
+  `app/api/gate.py` API tests (policy CRUD, run-gate against real
+  evaluation runs, decision inspection/history, baseline approval and
+  auto-versioning, run comparison).
+- Explicitly out of scope per the sprint plan (deferred, not attempted):
+  a React dashboard, JSON/HTML report generation, Phoenix, retry/backoff
+  for transient provider failures.
+
 ## Current sprint
 
-Sprint 7 — OpenAI Evals Integration: **complete**.
+Sprint 8 — Release Policy Engine and Regression Baselines: **complete**.
 
 ## Outstanding work (future sprints, not started)
 
@@ -720,13 +832,13 @@ Sprint 7 — OpenAI Evals Integration: **complete**.
   Not implemented this sprint — `AQG_RAGAS_ENABLED=true` always requires
   `AQG_OPENAI_API_KEY`, independent of which provider generates the answer
   being graded.
-- **RAGAS results feeding the Policy Engine**: `MetricResult.metadata["ragas_status"]`
-  (`scored`/`skipped_missing_input`/`infrastructure_error`) exists
-  specifically so a future Policy Engine sprint can treat an infrastructure
-  failure differently (e.g. WARN/retry) from a real threshold miss (BLOCK)
-  — nothing consumes that distinction yet, since `GateDecision` computation
-  doesn't exist yet at all (see the pre-existing Sprint 4 outstanding item
-  below).
+- **RAGAS results feeding the Policy Engine**: resolved this sprint —
+  `PolicyEngine`'s `_metric_status` reads `metadata["ragas_status"]`
+  (alongside DeepEval's/OpenAI-Evals'/any future framework's own
+  `_status` key) via the generic `*_status`/`error_type` convention, and
+  `RequiredMetricPolicy.on_infrastructure_failure` lets a policy decide
+  BLOCK/WARN/ignore for it specifically, distinct from a real threshold
+  miss. See [[Sprint 8 decision 28]].
 - **DeepEval real-provider validation**: same gap as RAGAS above — every
   DeepEval test mocks the OpenAI SDK boundary; no test has run a real
   G-Eval judge call against a live key yet.
@@ -756,6 +868,19 @@ Sprint 7 — OpenAI Evals Integration: **complete**.
   — nothing in this codebase depends on it (see [[Sprint 7 decision 26]]),
   but worth remembering if anyone later asks "why didn't we just use
   OpenAI's Evals API" while reading this file after that date.
+- **Policy CRUD is register-only**: `POST /gate/policies` creates a new
+  policy which immediately becomes active; there is no update/deactivate/
+  delete endpoint yet, and no way to name a policy "active" other than
+  "most recently registered" (`PolicyRepository.get_active`).
+- **`GateDecision`/`Baseline` don't yet drive anything automatically**: a
+  human (or CI step) has to call `POST /gate/decisions` and `POST
+  /gate/baselines` explicitly; there's no "auto-decide after every run" or
+  "auto-approve the first passing run as the baseline" behavior.
+- **Regression comparison is single-baseline, single-metric-list**: only
+  the dataset's *latest* baseline is ever compared against; there's no way
+  yet to compare a run against an arbitrary historical baseline version
+  (only `GET /gate/compare` for direct run-vs-run, which ignores baselines
+  and policy entirely).
 
 
 - Real-provider smoke validation: run `uv run pytest -v -m smoke` (or a
@@ -779,14 +904,15 @@ Sprint 7 — OpenAI Evals Integration: **complete**.
   `reference_context`) — Sprint 4 only proves chunks are retrieved/
   filtered correctly per scenario (see `test_unsupported_queries.py`),
   it doesn't score retrieval quality numerically.
-- Release policy engine: thresholds config, baseline/regression comparison
-  across runs, `GateDecision` computation (PASS/WARN/BLOCK) with audit
-  trail — `GateDecision` exists as a domain model but nothing computes one
-  yet; runs still only produce `CaseResult`s and run-level pass/fail counts.
+- Release policy engine: **resolved this sprint** — see the Sprint 8
+  section above and [[Sprint 8 decision 28]]/[[Sprint 8 decision 29]].
 - JSON/HTML evaluation report generation.
 - Observability integration (Arize Phoenix).
-- Persistent storage (repositories are in-memory only and reset on
-  restart — no database yet).
+- Persistent storage: **partially resolved this sprint** — policies,
+  baselines, and gate decisions are SQLite-backed (`AQG_POLICY_DB_PATH`,
+  defaulting to `:memory:`); golden datasets, evaluation runs, and
+  per-case results are still `InMemoryRepository`-only and reset on
+  restart.
 - React engineering dashboard (frontend does not exist yet).
 - Docker packaging and GitHub Actions CI.
 - A `GET /api/v1/evaluations/runs` list endpoint (only "run" and "inspect
@@ -930,6 +1056,43 @@ curl -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
   -d '{"dataset_name": "customer_support_bot", "dataset_version": "1.1.0", "frameworks": ["openai_evals"]}'
 ```
 
+Sprint 8's Release Policy Engine (a permissive default policy is seeded
+automatically; persistence is `:memory:` unless `AQG_POLICY_DB_PATH` is set):
+
+```bash
+# run only the Sprint 8 / policy engine test suite (no API key or cost)
+uv run pytest -v tests/policy/ tests/unit/test_release_policy.py \
+  tests/unit/test_baseline.py tests/unit/test_sqlite_repository.py tests/api/test_gate_api.py
+
+# run an evaluation, then run the gate against it using the seeded default policy
+RUN_ID=$(curl -s -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "customer_support_bot", "dataset_version": "1.0.0"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['run']['id'])")
+
+curl -X POST http://127.0.0.1:8000/api/v1/gate/decisions \
+  -H "Content-Type: application/json" -d "{\"run_id\": \"$RUN_ID\"}"
+# customer_support_bot@1.0.0 has two known critical-case failures, so this
+# BLOCKs against the default policy (critical_case_action defaults to "block")
+
+# register a stricter policy with a required metric and a latency budget
+curl -X POST http://127.0.0.1:8000/api/v1/gate/policies \
+  -H "Content-Type: application/json" \
+  -d '{"name": "release-gate", "version": "1.0.0", "min_pass_rate": 0.9,
+       "required_metrics": [{"metric_name": "exact_match", "min_score": 1.0}],
+       "latency_budget_ms": 2000, "latency_budget_action": "warn"}'
+# this immediately becomes the active policy (POST /gate/policies has no
+# separate activation step - see DECISIONS.md #28)
+
+# approve the current run as the dataset's first baseline, then re-run the
+# gate on a later run to see a regression comparison
+curl -X POST http://127.0.0.1:8000/api/v1/gate/baselines \
+  -H "Content-Type: application/json" -d "{\"run_id\": \"$RUN_ID\", \"approved_by\": \"you\"}"
+
+# inspect decision history and compare two runs directly
+curl http://127.0.0.1:8000/api/v1/gate/decisions
+curl "http://127.0.0.1:8000/api/v1/gate/compare?run_id_a=$RUN_ID&run_id_b=$RUN_ID"
+```
+
 Interactive API docs at `/docs` (OpenAPI at `/openapi.json`).
 
 ## Important environment variables
@@ -970,5 +1133,6 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_OPENAI_EVALS_ENABLED` | `false` | Adds the OpenAI-model-graded label/structured-correctness evaluators to the runner when `true`. Requires `AQG_OPENAI_API_KEY`; app startup raises `OpenAIEvalsConfigurationError` otherwise |
 | `AQG_OPENAI_EVALS_LLM_MODEL` | unset (falls back to `AQG_OPENAI_MODEL`) | Judge model used for both grading calls |
 | `AQG_OPENAI_EVALS_STRUCTURED_CORRECTNESS_THRESHOLD` | `0.80` | Default pass/fail cutoff for the structured-correctness evaluator; a case can override it via `case.metadata["openai_grader_threshold"]` |
+| `AQG_POLICY_DB_PATH` | `:memory:` | SQLite file for policies/baselines/gate decisions. Relative paths resolve against the backend root. `:memory:` (the default) does not persist across restarts — set a real path (e.g. `data/quality_gate.db`) for actual persistence |
 
 Settings are also loadable from a `backend/.env` file (not committed).

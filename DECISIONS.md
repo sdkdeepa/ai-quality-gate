@@ -1058,3 +1058,162 @@ metadata. This is deliberate (the same trade-off `DeepEvalCriteriaEvaluator`
 already accepted in Sprint 6): a criteria-less classifier would have
 nothing meaningful to check, so requiring explicit per-case configuration
 is correct rather than a gap.
+
+## Sprint 8 — Release Policy Engine and Regression Baselines
+
+### 28. Some policy checks are hard-BLOCK-only; others are policy-configurable BLOCK/WARN/ignore — the split follows "is this a quality question or an operational one"
+
+**Decision:** `PolicyEngine` treats two kinds of failure as always a hard
+BLOCK, with no policy-level way to downgrade them:
+- the overall case pass rate falling below `ReleasePolicy.min_pass_rate`,
+- a *required* metric's aggregate score falling below its own
+  `RequiredMetricPolicy.min_score`.
+
+Everything else is configurable per-dimension via an explicit action field:
+critical-case failures (`critical_case_action`: block/warn — "ignore" is
+deliberately not offered), a required metric never executing at all
+(`on_missing`: block/warn/ignore), a required metric's evaluator hitting an
+infrastructure failure (`on_infrastructure_failure`: block/warn/ignore),
+regressions against the baseline (`regression_action`: block/warn), and
+latency/cost budget breaches (`latency_budget_action`/`cost_budget_action`:
+block/warn, each defaulting to `warn`).
+
+The vacuous-PASS guard — a run producing zero `MetricResult`s anywhere is
+always a hard BLOCK — sits outside this configurability question entirely:
+it is not part of `ReleasePolicy` at all, and fires unconditionally
+regardless of what `required_metrics` contains, because it protects
+against a *policy misconfiguration* (nothing was ever actually checked),
+not a policy *choice*.
+
+**Reason:** The line between the two groups is "does this measure whether
+the system under test is actually correct, or does it measure something
+about how the evaluation/release process itself behaved." A pass-rate miss
+or a required metric failing its own bar is a direct, first-order quality
+signal — the system produced answers a human explicitly said matter, and
+they weren't good enough; there is no principled "warn about this instead"
+reading of that, because "required" already means the org decided this
+metric's outcome determines releasability. Critical-case handling,
+missing/infra-failed evaluators, regressions, and budgets are all, in
+different ways, about the *evaluation process's* behavior (did the right
+checks even run, did quality move in the wrong direction, is a response
+taking too long/costing too much) rather than a direct correctness verdict
+on this run's answers — reasonable organizations differ on whether those
+should hard-block a release before a corresponding policy has been tuned
+to their actual risk tolerance, so those get a knob. The sprint's own
+explicit requirement — "a run must never receive PASS merely because zero
+required evaluators executed" — reads as an invariant of the *engine*, not
+a *policy choice* a operator should even be able to turn off, hence its own
+unconditional guard rather than a `ReleasePolicy` field.
+
+**Alternatives considered:** Making every single check configurable,
+including pass-rate and required-metric-threshold misses — rejected; this
+would let a policy configure itself into never blocking anything at all,
+which contradicts "required" having any real meaning and makes
+`min_pass_rate` purely decorative. Making every check hard-BLOCK-only, with
+no configurability at all — rejected; it doesn't survive contact with real
+organizations' actual practice, where a first rollout of, say, a latency
+budget usually wants to observe/warn before it hard-blocks releases, and a
+regression against a one-run baseline may reasonably be treated as a
+signal to investigate rather than an automatic stop the first few times a
+team uses this feature. Offering "ignore" for critical-case failures, to
+match the other configurable dimensions exactly — rejected; a case being
+marked `critical: true` in the dataset (Sprint 2) is itself a deliberate
+human decision that this case's outcome matters more than ordinary ones,
+so silently dropping it from the audit trail entirely would defeat the
+purpose of marking it critical in the first place; "warn" already gives a
+policy the ability to not hard-block on it while still surfacing it.
+
+**Trade-off:** A team that genuinely wants a required metric's threshold
+miss to only WARN has no way to express that directly — they have to
+either not mark it `required` (losing the missing/infra-failure
+protections that come with being required) or set `min_score` lower
+(changing what "meets the bar" means, not just the consequence of missing
+it). Judged acceptable: conflating "this metric matters enough to be
+required" with "but a real quality miss on it should only be a warning" is
+a confusing policy to write and read; a team in that position is almost
+always better served by lowering the threshold or moving the metric out of
+`required_metrics` (where a low score still shows up in `aggregate_metrics`
+and any `new_failures`/`recovered_failures` tracking, just without gating
+the release) than by a `min_score`-miss-severity knob.
+
+### 29. Policies, baselines, and gate decisions persist to SQLite as JSON blobs behind the existing `Repository[T]` shape; datasets/runs/case-results remain in-memory
+
+**Decision:** `app/repositories/sqlite.py`'s `SQLiteRepository[T]`
+implements the exact same five-method contract
+(`add`/`get`/`list`/`delete`/`count`) that `InMemoryRepository[T]`
+(Sprint 1) already established, so it is a drop-in swap for any consumer
+written against that shape — no new repository *interface* was introduced.
+Each item is stored as a single JSON blob (`item.model_dump_json()`) in a
+two-column table (`id TEXT PRIMARY KEY, data TEXT`), rather than a
+normalized relational schema with one column per field. `PolicyRepository`,
+`BaselineRepository`, and `GateDecisionRepository` subclass it and add a
+small number of purpose-built query methods (`get_active`,
+`get_latest_for_dataset`, `list_for_run`, `list_history`) that filter/sort
+the full `list()` result in Python rather than via SQL `WHERE`/`ORDER BY`.
+One connection is opened per repository instance and held open for its
+whole lifetime, guarded by a `threading.Lock`, rather than a fresh
+connection per call.
+
+Only policies, baselines, and gate decisions moved to SQLite this sprint.
+Golden datasets, evaluation runs, and per-case results remain
+`InMemoryRepository`-backed, unchanged since Sprint 1/2 — a deliberate
+scope boundary, not an oversight (see "Trade-off" below).
+
+**Reason:** The sprint's own framing — "persistence via SQLite for local
+use" — set the bar at "survives a process restart for a single operator,"
+not "production-grade relational store." A JSON-blob table gets there with
+the least code and the least risk of a schema/model drift bug (there is
+exactly one place, the Pydantic model itself, that defines what a
+`ReleasePolicy`/`Baseline`/`GateDecision` looks like — no parallel SQL
+column list to keep in sync with it by hand as fields are added). Matching
+`Repository[T]`'s existing shape rather than inventing a new one means
+`PolicyService` and any future consumer can be written against "a
+repository," full stop, the same way `EvaluationService`/`RAGService`
+already are against `InMemoryRepository[T]`. The held-open-connection-plus-
+lock design was arrived at empirically: a first draft opened a fresh
+connection per call, which is the more common pattern for short-lived web
+request handlers, but it breaks silently for `":memory:"` databases
+specifically — each `sqlite3.connect(":memory:")` call is a distinct, empty
+database, so a table created by an earlier connection simply isn't visible
+to a later one. That bug was caught by the very first exercise of the
+in-memory path (an interactive smoke test before any test file was even
+written), not by a test — which is itself the reason `test_sqlite_repository.py`
+now includes `test_memory_databases_are_isolated_per_repository_instance`
+and `test_file_backed_persists_across_repository_instances` as explicit
+regression coverage for exactly this.
+
+**Alternatives considered:** A normalized relational schema (a real
+`policies` table with a column per `ReleasePolicy` field, etc.) — rejected
+for this sprint's scope; it would need a migration story the moment a field
+is added or changed, which none of Sprint 1-7's in-memory repositories have
+ever needed, and "local use" doesn't call for relational querying
+(`WHERE`/`JOIN`) that the Python-side filtering in the three subclasses'
+query methods doesn't already cover at the expected scale. An ORM
+(SQLAlchemy or similar) — rejected as more machinery than a handful of
+JSON-blob tables justify; the domain models are already the schema.
+Extending `InMemoryRepository[T]` itself to optionally persist to disk
+(e.g. writing its dict to a JSON file on every `add`) — rejected; conflates
+two different storage backends' concerns in one class, and SQLite's atomic
+writes and a real `PRIMARY KEY` constraint are worth the small amount of
+extra code over ad hoc file writes. Moving *all* repositories (including
+datasets/runs/case-results) to SQLite in this sprint — rejected as scope
+creep beyond what this sprint asked for ("persistence via SQLite for local
+use" appears once, in the context of the policy engine's own new
+entities); those three remain a natural candidate for a later sprint using
+the exact same `SQLiteRepository[T]` this sprint built, not a redesign.
+
+**Trade-off:** Every query beyond "get by id" or "list everything"
+(`get_active`, `get_latest_for_dataset`, `list_for_run`, `list_history`) is
+a full table scan followed by Python-side filtering/sorting, not an
+indexed SQL query — fine at the row counts "local use" implies (dozens to
+low thousands of policies/baselines/decisions), but would need revisiting
+before this became a shared, multi-operator, long-running deployment. The
+split between SQLite-backed (policy/baseline/decision) and in-memory
+(dataset/run/case-result) repositories also means the Gate's full history
+of *evaluation runs* still does not survive a restart even though the
+*decisions and baselines about them* do — a decision or baseline can end
+up referencing a `run_id` that no longer resolves to anything after a
+restart. Acceptable for this sprint (moving runs/case-results to SQLite
+too is exactly the natural next increment, using infrastructure this
+sprint already built) but worth flagging explicitly rather than leaving
+implicit.
