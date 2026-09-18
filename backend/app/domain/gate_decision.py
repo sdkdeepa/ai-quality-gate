@@ -72,6 +72,13 @@ class GateDecision(BaseModel):
     regression_summary: RegressionSummary | None = None
     baseline_version: int | None = None
 
+    # Sprint 9: copied from the decided run's `EvaluationRun.trace_id`, if
+    # any, so this audit record alone is enough to jump to the full trace
+    # (requirement: "trace IDs ... correlated to audit records"). This
+    # model still has no idea what OpenTelemetry/Phoenix even are - it's
+    # just a string field `PolicyService.decide` happens to fill in.
+    trace_id: str | None = None
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator(

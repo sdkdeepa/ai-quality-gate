@@ -22,6 +22,14 @@ class EvaluationRun(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     status: RunStatus = RunStatus.PENDING
+    # Sprint 9: the OpenTelemetry trace id (32-hex-digit string) of this
+    # run's root span, when tracing is enabled and configured successfully
+    # — None otherwise (tracing disabled, or Phoenix/registration failed;
+    # see `app/observability/tracing.py`). Requirement: "trace IDs
+    # persisted with runs ... correlated to audit records" — a
+    # `GateDecision` about this run copies it (see `PolicyService.decide`)
+    # so a reader of either can jump straight to the other.
+    trace_id: str | None = None
 
     @field_validator("dataset_name", "dataset_version", "provider", "model")
     @classmethod

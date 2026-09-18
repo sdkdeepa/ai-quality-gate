@@ -83,6 +83,16 @@ class Settings(BaseSettings):
     # `data/quality_gate.db`) to get actual persistence across restarts.
     policy_db_path: str = ":memory:"
 
+    # Sprint 9 — Arize Phoenix Observability. Disabled by default, same
+    # rationale as every other opt-in integration (RAGAS/DeepEval/OpenAI
+    # Evals): an unconfigured install shouldn't silently try to reach a
+    # collector that isn't there. When enabled, `app/observability/tracing.py`
+    # still degrades to a no-op tracer (never raises) if Phoenix is
+    # unreachable or setup otherwise fails — see DECISIONS.md #30.
+    tracing_enabled: bool = False
+    phoenix_collector_endpoint: str = "http://localhost:6006/v1/traces"
+    phoenix_project_name: str = "ai-quality-gate"
+
 
 @lru_cache
 def get_settings() -> Settings:

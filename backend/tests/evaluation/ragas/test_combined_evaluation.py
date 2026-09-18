@@ -20,6 +20,7 @@ class _FakeRagasEvaluator:
     """Minimal Evaluator protocol implementation, framework='ragas'."""
 
     name = "ragas_fake_metric"
+    framework = "ragas"
 
     def __init__(self, score: float, threshold: float = 0.7) -> None:
         self._score = score
