@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     ragas_context_precision_threshold: float = 0.70
     ragas_context_recall_threshold: float = 0.70
 
+    # CORS: comma-separated list of allowed origins for browser clients (the
+    # React dashboard in dev). Empty by default — CORS is opt-in, same
+    # rationale as every other integration in this app (nothing talks
+    # cross-origin until you say so).
+    cors_origins: str = ""
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
     @property
     def ragas_metrics_list(self) -> list[str]:
         return [m.strip() for m in self.ragas_metrics.split(",") if m.strip()]

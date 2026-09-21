@@ -2,8 +2,9 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import datasets, evaluations, gate, health, rag, status
+from app.api import datasets, evaluations, gate, health, rag, reports, status
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
@@ -24,6 +25,7 @@ from app.services.dataset_service import DatasetService
 from app.services.evaluation_service import EvaluationService
 from app.services.policy_service import PolicyService
 from app.services.rag_service import RAGService
+from app.services.report_service import ReportService
 from app.services.status_service import StatusService
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -118,6 +120,18 @@ def create_app() -> FastAPI:
         baseline_repository=app.state.baseline_repository,
         gate_decision_repository=app.state.gate_decision_repository,
     )
+    # Sprint 10 — Reports. Pure composition over PolicyService; no new
+    # repository of its own (reports are generated on demand, not stored).
+    app.state.report_service = ReportService(app.state.policy_service)
+
+    if settings.cors_origins_list:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins_list,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     app.add_middleware(RequestIDMiddleware)
     register_exception_handlers(app)
@@ -128,6 +142,7 @@ def create_app() -> FastAPI:
     app.include_router(evaluations.router, prefix=settings.api_v1_prefix)
     app.include_router(rag.router, prefix=settings.api_v1_prefix)
     app.include_router(gate.router, prefix=settings.api_v1_prefix)
+    app.include_router(reports.router, prefix=settings.api_v1_prefix)
 
     return app
 

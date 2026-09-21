@@ -76,6 +76,22 @@ def run_evaluation(
     return _run_summary(run, results)
 
 
+@router.get("/runs")
+def list_evaluation_runs(
+    evaluation_service: Annotated[EvaluationService, Depends(get_evaluation_service)],
+) -> list[dict]:
+    """List every evaluation run (newest first), each with its pass/fail
+    summary but not full case results — the dashboard's "Evaluation Runs"
+    view (Sprint 10) needs an overview list distinct from `GET
+    /runs/{run_id}`'s full per-case detail."""
+    runs = sorted(evaluation_service.list_runs(), key=lambda r: r.started_at, reverse=True)
+    summaries = []
+    for run in runs:
+        _, results = evaluation_service.get_run(run.id)
+        summaries.append(_run_summary(run, results))
+    return summaries
+
+
 @router.get("/runs/{run_id}")
 def get_evaluation_run(
     run_id: str,

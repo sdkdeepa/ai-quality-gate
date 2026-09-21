@@ -205,3 +205,30 @@ def test_run_with_unknown_provider_value_returns_422(client):
     )
 
     assert response.status_code == 422
+
+
+def test_list_evaluation_runs_is_empty_before_any_run(client):
+    response = client.get("/api/v1/evaluations/runs")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_evaluation_runs_returns_summaries_newest_first(client):
+    client.post(
+        "/api/v1/evaluations/runs",
+        json={"dataset_name": "customer_support_bot", "dataset_version": "1.0.0"},
+    )
+    second = client.post(
+        "/api/v1/evaluations/runs",
+        json={"dataset_name": "customer_support_bot", "dataset_version": "1.1.0"},
+    )
+
+    response = client.get("/api/v1/evaluations/runs")
+
+    assert response.status_code == 200
+    runs = response.json()
+    assert len(runs) == 2
+    assert runs[0]["run"]["id"] == second.json()["run"]["id"]
+    assert "case_count" in runs[0]
+    assert "case_results" not in runs[0]

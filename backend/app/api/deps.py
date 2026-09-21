@@ -4,6 +4,7 @@ from app.services.dataset_service import DatasetService
 from app.services.evaluation_service import EvaluationService
 from app.services.policy_service import PolicyService
 from app.services.rag_service import RAGService
+from app.services.report_service import ReportService
 from app.services.status_service import StatusService
 
 
@@ -25,3 +26,7 @@ def get_rag_service(request: Request) -> RAGService:
 
 def get_policy_service(request: Request) -> PolicyService:
     return request.app.state.policy_service
+
+
+def get_report_service(request: Request) -> ReportService:
+    return request.app.state.report_service

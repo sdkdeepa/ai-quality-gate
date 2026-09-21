@@ -45,3 +45,11 @@ class EvaluationService:
             raise NotFoundError(f"no evaluation run {run_id!r}")
         results = self._case_result_store.get(run.id) or []
         return run, results
+
+    def list_runs(self) -> list[EvaluationRun]:
+        """Sprint 10: the dashboard's "Evaluation Runs" view needs a list
+        endpoint that never existed through Sprint 1-9 (only "run" and
+        "inspect one run" did — see PROJECT_STATE.md's prior outstanding
+        work). `InMemoryRepository[T]` already implements `.list()`; this
+        was purely a missing API-layer method, not a missing capability."""
+        return self._run_repository.list()
