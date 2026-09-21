@@ -12,7 +12,7 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 8 — Release Policy Engine and Regression Baselines: complete.**
+**Sprint 10 — Reports and Engineering Dashboard: complete.**
 
 The service loads versioned golden datasets from disk and grades
 system-under-test responses with 8 deterministic evaluators (exact/
@@ -32,15 +32,24 @@ disabled by default, and independently selectable per run via an optional
 and `GeminiProvider` — selected per evaluation run; evaluation logic never
 depends on the OpenAI/Gemini/RAGAS/DeepEval SDKs directly, and provider/
 evaluator failures (timeout, rate limit, unavailable, malformed response,
-authentication) are normalized rather than raised. On top of all of that,
-a platform-owned release Policy Engine (`app/policy/engine.py`) — the only
-place PASS/WARN/BLOCK is ever computed — turns a run's results plus a
-configurable `ReleasePolicy` and an optional approved `Baseline` into an
-auditable `GateDecision`, persisted to SQLite (`AQG_POLICY_DB_PATH`)
-behind the API's `/gate/*` endpoints (run gate, inspect/list decisions,
-approve baselines, compare runs, manage policies). A small LangChain +
-ChromaDB RAG pipeline exists as a system under test. See `PROJECT_STATE.md`
-for full capability detail and outstanding work.
+authentication) are normalized rather than raised. A platform-owned release
+Policy Engine (`app/policy/engine.py`) — the only place PASS/WARN/BLOCK is
+ever computed — turns a run's results plus a configurable `ReleasePolicy`
+and an optional approved `Baseline` into an auditable `GateDecision`,
+persisted to SQLite (`AQG_POLICY_DB_PATH`) behind the API's `/gate/*`
+endpoints (run gate, inspect/list decisions, approve baselines, compare
+runs, manage policies). Optional Phoenix/OpenTelemetry tracing
+(`AQG_TRACING_ENABLED`) instruments every run, case, provider call, RAG
+retrieval, and evaluator execution, with trace IDs persisted on both the
+run and its gate decision for audit correlation — Phoenix only ever
+observes, never decides (see `docs/debugging-failed-runs.md`). Every
+`GateDecision` can be exported as a downloadable JSON or HTML report
+(`GET /reports/{decision_id}/json`|`/html`), and a separate `frontend/`
+— a Vite + React + TypeScript internal engineering dashboard (Overview,
+Evaluation Runs, Run Detail, Policies, Datasets) — gives a read-oriented
+view over the whole system, entirely as a thin client over this same API.
+A small LangChain + ChromaDB RAG pipeline exists as a system under test.
+See `PROJECT_STATE.md` for full capability detail and outstanding work.
 
 See [`PROJECT_STATE.md`](PROJECT_STATE.md) for current architecture,
 completed capabilities, outstanding work, and exact run commands, and
@@ -59,11 +68,23 @@ uv run ruff check .                  # lint
 Once running: `GET /health`, `GET /api/v1/status`, interactive docs at
 `/docs`.
 
+To run the engineering dashboard against that backend:
+
+```bash
+cd frontend
+npm install
+npm run dev    # dev server, defaults to http://localhost:8000/api/v1
+npm test       # Vitest + React Testing Library
+npm run build  # production build (tsc -b && vite build)
+```
+
 ## Repository layout
 
 ```
 ai-quality-gate/
 ├── PROJECT_STATE.md   # architecture, capabilities, outstanding work, run commands
 ├── DECISIONS.md        # architecture decision log
+├── docs/                # task-oriented guides (e.g. debugging-failed-runs.md)
+├── frontend/            # React/TypeScript internal engineering dashboard
 └── backend/            # FastAPI service (domain model, API, tests)
 ```
