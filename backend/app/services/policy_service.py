@@ -8,6 +8,7 @@ through this one service).
 
 from app.core.exceptions import NotFoundError
 from app.domain.baseline import Baseline
+from app.domain.case_result import CaseResult
 from app.domain.evaluation_run import EvaluationRun
 from app.domain.gate_decision import GateDecision
 from app.domain.release_policy import ReleasePolicy
@@ -39,6 +40,13 @@ class PolicyService:
             raise NotFoundError(f"no evaluation run {run_id!r}")
         results = self._case_result_store.get(run.id) or []
         return run, results
+
+    def get_run_and_results(self, run_id: str) -> tuple[EvaluationRun, list[CaseResult]]:
+        """Public wrapper for `_get_run_and_results` — Sprint 10's report
+        builder (`app/reports/`) needs the same run+case-results lookup
+        this service already does internally for `decide`/`approve_baseline`/
+        `compare_runs`, without duplicating it."""
+        return self._get_run_and_results(run_id)
 
     def _resolve_policy(self, policy_id: str | None) -> ReleasePolicy:
         if policy_id is not None:
