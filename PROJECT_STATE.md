@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-09-18 (Sprint 8 complete)
+Last updated: 2026-09-19 (Sprint 10 complete)
 
 ## Current architecture
 
@@ -9,6 +9,9 @@ ai-quality-gate/
 ├── PROJECT_STATE.md          # this file
 ├── DECISIONS.md               # architecture decision log
 ├── README.md
+├── docs/
+│   └── debugging-failed-runs.md  # Sprint 9: task-oriented Phoenix debugging guide
+├── frontend/                  # Sprint 10 — React/TypeScript engineering dashboard (see below)
 └── backend/
     ├── pyproject.toml         # uv-managed project, deps + ruff + pytest config
     ├── README.md
@@ -72,6 +75,11 @@ ai-quality-gate/
         │   └── factory.py           # build_retriever(settings): wires embeddings/store/ingestion
         ├── policy/              # release policy engine (Sprint 8) — the ONLY place PASS/WARN/BLOCK is computed
         │   └── engine.py            # PolicyEngine.decide(); aggregate_metrics_for_run/framework_errors_for_run/pass_rate_for_run
+        ├── observability/       # Sprint 9 — Arize Phoenix tracing, isolated (has no idea app/policy/ exists)
+        │   └── tracing.py           # configure_tracing() -> Tracer (real or OTel's own no-op); trace_id_hex()
+        ├── reports/             # Sprint 10 — downloadable JSON/HTML reports, a presentation layer over GateDecision
+        │   ├── report.py            # Report model + build_report(decision, run, case_results)
+        │   └── html.py              # render_html(report) -> str (dependency-free, HTML-escaped)
         ├── repositories/       # storage abstraction
         │   ├── base.py             # Repository protocol
         │   ├── in_memory.py        # InMemoryRepository[T], InMemoryCaseResultStore
@@ -79,24 +87,51 @@ ai-quality-gate/
         ├── services/           # application/orchestration layer
         │   ├── status_service.py     # assembles /api/v1/status payload
         │   ├── dataset_service.py    # load/validate/list/get datasets + fixtures from disk
-        │   ├── evaluation_service.py # orchestrates dataset -> provider factory -> runner -> repositories
+        │   ├── evaluation_service.py # orchestrates dataset -> provider factory -> runner -> repositories;
+        │   │                         # list_runs() added Sprint 10 for the dashboard's Evaluation Runs view
         │   ├── rag_service.py        # orchestrates RAG query / chunk inspection / evaluate-a-case
-        │   └── policy_service.py     # Sprint 8: decide/approve-baseline/compare-runs/policy registration
+        │   ├── policy_service.py     # Sprint 8: decide/approve-baseline/compare-runs/policy registration
+        │   └── report_service.py     # Sprint 10: composes PolicyService's decision+run+cases into a Report
         ├── api/                 # HTTP layer (FastAPI routers)
         │   ├── deps.py              # FastAPI dependency providers
         │   ├── _view.py             # metrics_by_framework(): groups a CaseResult's MetricResults by framework
         │   ├── health.py            # GET /health
         │   ├── status.py            # GET /api/v1/status
         │   ├── datasets.py          # GET /api/v1/datasets, GET /api/v1/datasets/{name}/{version}
-        │   ├── evaluations.py       # POST /api/v1/evaluations/runs, GET /api/v1/evaluations/runs/{id}
+        │   ├── evaluations.py       # POST /api/v1/evaluations/runs, GET /api/v1/evaluations/runs (Sprint 10),
+        │   │                         # GET /api/v1/evaluations/runs/{id}
         │   ├── rag.py                # POST /rag/query, GET /rag/chunks, POST /rag/evaluate/{case_id}
-        │   └── gate.py                # Sprint 8: /gate/decisions, /gate/baselines, /gate/compare, /gate/policies
+        │   ├── gate.py                # Sprint 8: /gate/decisions, /gate/baselines, /gate/compare, /gate/policies
+        │   └── reports.py             # Sprint 10: GET /reports/{decision_id}/json, GET /reports/{decision_id}/html
         └── core/                 # cross-cutting concerns
             ├── config.py            # Settings (env-var driven, AQG_ prefix; dataset_dir + provider config)
             ├── context.py           # request-id ContextVar
             ├── logging.py           # JSON log formatter, configure_logging()
             ├── middleware.py        # RequestIDMiddleware (trace ID + timing)
             └── exceptions.py        # AppError family + exception handlers (incl. ProviderConfigurationError)
+```
+
+Sprint 10 also adds a sibling `frontend/` — a Vite + React + TypeScript internal
+engineering dashboard, entirely separate from the Python backend above:
+
+```
+frontend/
+├── src/
+│   ├── api/
+│   │   ├── types.ts          # TS types mirroring backend response shapes
+│   │   ├── client.ts         # typed fetch wrapper, ApiError, report download URLs
+│   │   └── useApiData.ts     # shared loading/error/data hook every page uses
+│   ├── components/
+│   │   ├── Layout.tsx        # sidebar nav (Overview/Evaluation Runs/Policies/Datasets) + Outlet
+│   │   └── StatusBadge.tsx   # colour-coded PASS/WARN/BLOCK label
+│   ├── pages/
+│   │   ├── Overview.tsx      # counts, active policy, recent runs
+│   │   ├── RunsList.tsx      # Evaluation Runs view
+│   │   ├── RunDetail.tsx     # Run Detail view: cases, gate decisions, "Run gate", report downloads
+│   │   ├── Policies.tsx      # Policies view
+│   │   └── Datasets.tsx      # Dataset view, drills into one version's cases
+│   └── App.tsx                # HashRouter route table for the 5 views
+└── vite.config.ts             # includes the Vitest config (jsdom, setupFiles)
 ```
 
 **Layering principle in effect:** domain models have zero framework
@@ -184,6 +219,39 @@ See [[Sprint 8 decision 28]] for the full design (why several checks are
 hard-BLOCK-only while others are policy-configurable) and
 [[Sprint 8 decision 29]] for the SQLite persistence approach.
 
+`AQG_CORS_ORIGINS=http://localhost:5173`
+
+**Phoenix observes; it never decides (Sprint 9):** `app/observability/tracing.py`
+is the only module that imports `phoenix`/`openinference`/`opentelemetry`
+for setup — `configure_tracing()` returns a plain `opentelemetry.trace.Tracer`,
+either bound to a real Phoenix-pointed `TracerProvider` or (tracing
+disabled, or setup failed for any reason) OpenTelemetry's own built-in
+no-op tracer, and every span-creation call site (`app/evaluation/runner.py`,
+`app/rag/retriever.py`) is byte-identical either way. `app/policy/` has no
+idea this module exists, and this module never imports anything from
+`app/policy/` or reads a `MetricResult`'s score — it only emits spans
+*describing* what a run/case/provider-call/evaluator/retrieval already
+did, after the fact, never computing or influencing PASS/WARN/BLOCK.
+`EvaluationRun.trace_id`/`GateDecision.trace_id` are the only two places
+tracing "leaks" into the domain model, and both are just an optional
+string a `PolicyEngine`/`EvaluationRunner` happens to set — deleting
+`app/observability/` entirely would leave both fields `None` and nothing
+else in the codebase would need to change. Debugging workflow:
+`docs/debugging-failed-runs.md`. See [[Sprint 9 decision 30]].
+
+**Reports are a read-only export over what already exists (Sprint 10):**
+`app/reports/report.py`'s `build_report()` and `app/reports/html.py`'s
+`render_html()` never compute anything new — every field on a `Report`
+already lives on some `GateDecision`/`EvaluationRun`/`CaseResult`, or is a
+cheap aggregate (pass rate, mean latency, total cost/tokens) derived
+straight from `case_results`. Nothing in `app/reports/` writes to a
+repository or could change a `GateDecision`'s outcome; it is purely a
+presentation layer callable any number of times for the same decision
+with identical results. The React dashboard (`frontend/`) is the same
+principle taken further: it is a thin client over the existing HTTP API
+(`api/client.ts`), with no server-side logic of its own — every number the
+dashboard shows is something `GET /api/v1/...` already returned.
+
 **Provider boundary (Sprint 3):** `app/providers/base.py` defines the
 `Provider` protocol — `name`, `model`, `generate(ProviderRequest) ->
 ProviderResponse`. `DeterministicProvider`, `OpenAIProvider`, and
@@ -209,7 +277,7 @@ with the same 8 deterministic evaluators as everything else — no
 RAG-specific evaluator, no RAG-specific branch in the runner. See
 [[Sprint 4 decision 17]] for exactly where LangChain is used vs. our own code.
 
-## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7 + Sprint 8)
+## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7 + Sprint 8 + Sprint 9 + Sprint 10)
 
 **Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
@@ -815,9 +883,121 @@ RAG-specific evaluator, no RAG-specific branch in the runner. See
   a React dashboard, JSON/HTML report generation, Phoenix, retry/backoff
   for transient provider failures.
 
+**Sprint 9 — Arize Phoenix Observability:**
+
+*(This section was missing from the repository's `PROJECT_STATE.md` even
+though the sprint's code was committed and working — backfilled during
+Sprint 10's doc pass after being noticed while reading this file, per
+this sprint's own "read PROJECT_STATE.md and DECISIONS.md first"
+instruction. See `docs/debugging-failed-runs.md` for the accompanying
+debugging guide, which was already present.)*
+
+- `app/observability/tracing.py`'s `configure_tracing()` is the entire
+  observability boundary — see the architecture note above. Returns a
+  plain OpenTelemetry `Tracer`: a real one (bound to a Phoenix-pointed
+  `TracerProvider`, built via `arize-phoenix-otel`'s `register()`) when
+  `AQG_TRACING_ENABLED=true` and setup succeeds, or OpenTelemetry's own
+  built-in no-op tracer in every other case. Never raises — this is what
+  makes "app works when Phoenix is unavailable" hold unconditionally.
+  Depends on `arize-phoenix-otel` + `openinference-semantic-conventions`
+  only — deliberately not the full `arize-phoenix` server package, which
+  is Phoenix itself, run as a separate process. See
+  [[Sprint 9 decision 30]].
+- Dependency injection, not global OTel state: the returned `Tracer` is
+  threaded into `EvaluationRunner(tracer=...)` and `Retriever(tracer=...)`
+  (via `build_retriever(..., tracer=...)`) by ordinary constructor
+  injection, never `set_global_tracer_provider`.
+- Span hierarchy, all from two instrumented files
+  (`app/evaluation/runner.py`, `app/rag/retriever.py`) with no changes to
+  any Provider/Evaluator/RAGProvider implementation: `evaluation_run`
+  (root) → `case` → `provider_call` (→ `retrieval`, RAG cases only, nested
+  as a child so retrieval and generation are visible separately) and one
+  `evaluator` span per applicable evaluator. Uses OpenInference span
+  kinds/attributes (`llm.*`, `retrieval.documents.*`) so Phoenix's UI
+  renders them correctly.
+- `EvaluationRun.trace_id`/`GateDecision.trace_id` (new fields): the root
+  span's 32-hex-digit trace id, or `None` when tracing is disabled/
+  unavailable. `PolicyEngine.decide()` copies `run.trace_id` onto the
+  `GateDecision` it produces, so a single audit record is enough to jump
+  to the full trace.
+- 18 new tests (521 total, 5 still self-skipped): `configure_tracing`'s
+  disabled/graceful-failure/warning-logged paths and `trace_id_hex`'s
+  valid/no-op cases (`tests/observability/test_tracing.py`, never
+  touching a real network), plus real span-hierarchy/attribute/trace-id-
+  propagation tests using an `InMemorySpanExporter`
+  (`tests/observability/test_instrumentation.py`), including explicit
+  verification that a RAG case's `retrieval` span is distinct from and
+  nested under its `provider_call` span.
+- A pre-existing test-fixture bug was found and fixed: a fake `Evaluator`
+  used since Sprint 5 (`tests/evaluation/ragas/test_combined_evaluation.py`)
+  had a docstring claiming `framework="ragas"` that its code never
+  actually set — invisible until Sprint 9 became the first code to
+  unconditionally read `Evaluator.framework` on every invocation.
+- Explicitly out of scope per the sprint plan (deferred, not attempted):
+  auto-instrumentation of LangChain/ChromaDB internals, Phoenix Cloud
+  authentication, trace sampling.
+
+**Sprint 10 — Reports and Engineering Dashboard:**
+
+- **Backend — downloadable reports:** `app/reports/report.py`'s `Report`
+  model + `build_report()` assemble everything the sprint asked for from
+  data that already exists — PASS/WARN/BLOCK, run metadata, dataset
+  version, provider/model, policy version, aggregate metrics, per-case
+  results, critical failures, regressions, latency, token usage,
+  estimated cost, framework errors, trace ID — plus a handful of cheap
+  aggregates (pass rate, mean latency, total cost/tokens) derived from
+  `case_results` rather than recomputed by every caller.
+  `app/reports/html.py` renders the same content as one self-contained
+  HTML page with no template-engine dependency (plain f-strings,
+  `html.escape`d throughout), matching the "isolated module" precedent
+  Sprint 5/9 set for similarly self-contained concerns.
+  `GET /api/v1/reports/{decision_id}/json` and `/html`
+  (`app/api/reports.py`, `app/services/report_service.py`) return both as
+  downloadable attachments (`Content-Disposition: attachment`). Nothing
+  in `app/reports/` is a new source of truth or writes to a repository —
+  see the architecture note above.
+- **Backend — a real gap closed:** `GET /api/v1/evaluations/runs` (list,
+  newest first, summary only) didn't exist through Sprint 9 — only "run"
+  and "inspect one run" did. The dashboard's Evaluation Runs view needed
+  it, so it was added to `EvaluationService.list_runs()` +
+  `api/evaluations.py`; `InMemoryRepository[T]` already implemented
+  `.list()`, this was purely a missing API-layer method.
+- **Frontend:** a new sibling `frontend/` — Vite + React 19 + TypeScript,
+  react-router-dom, Vitest + React Testing Library. Five views: Overview
+  (counts, active policy, recent runs), Evaluation Runs (list), Run
+  Detail (case results, gate decisions with a "Run gate" button, report
+  download links), Policies, and Datasets (drills into one version's
+  cases). A typed fetch client (`src/api/client.ts`, `types.ts`) and a
+  shared `useApiData` hook are the only things every page depends on
+  beyond React itself — no heavier state-management library needed for a
+  read-mostly dashboard. Styled deliberately as a dense, utilitarian
+  engineering tool (monospace IDs, muted colors, colour-coded PASS/WARN/
+  BLOCK badges) rather than a marketing site — no hero sections,
+  gradients, or illustrations.
+- 21 new backend tests (542 total, 5 still self-skipped): `build_report`/
+  `render_html` unit tests (aggregation math, HTML escaping, section
+  presence/absence), `GET /reports/*` API tests, and the new
+  `GET /evaluations/runs` list endpoint's tests.
+- 34 new frontend tests (Vitest + React Testing Library) across 7 files:
+  `StatusBadge` (label/colour mapping for every status, including an
+  unrecognized one), the API client (URL/method construction, error-body
+  parsing, report-URL builders), and each of the four testable pages
+  (`RunsList`, `RunDetail` — including the interactive "click Run gate →
+  see the new decision" flow — `Policies`, `Datasets` — including the
+  "View cases" drill-down) plus `Layout` (nav rendering, active-link
+  highlighting, route-outlet rendering). `npm run build` and `npm run
+  lint` both pass (one expected, documented lint warning on the
+  intentionally-dynamic-`deps` `useApiData` hook - a standard pattern for
+  reusable data-fetching hooks; 0 lint errors).
+- Explicitly out of scope per the sprint plan (deferred, not attempted):
+  policy/baseline creation or editing from the dashboard (Policies view is
+  read-only this sprint — registration still goes through the API
+  directly), authentication/authorization for the dashboard itself,
+  Docker/deployment packaging for the frontend.
+
 ## Current sprint
 
-Sprint 8 — Release Policy Engine and Regression Baselines: **complete**.
+Sprint 10 — Reports and Engineering Dashboard: **complete**.
 
 ## Outstanding work (future sprints, not started)
 
@@ -881,6 +1061,27 @@ Sprint 8 — Release Policy Engine and Regression Baselines: **complete**.
   yet to compare a run against an arbitrary historical baseline version
   (only `GET /gate/compare` for direct run-vs-run, which ignores baselines
   and policy entirely).
+- **Phoenix Cloud authentication**: `phoenix.otel.register()` accepts
+  `api_key`/`headers` for Phoenix Cloud or an authenticated self-hosted
+  collector; not yet exposed as `Settings` fields — only a bare
+  `AQG_PHOENIX_COLLECTOR_ENDPOINT` (suitable for a local/unauthenticated
+  Phoenix instance) exists.
+- **Trace sampling**: every span is captured unconditionally when tracing
+  is enabled; no head- or tail-sampling configuration exists.
+- **LangChain/ChromaDB internals are not auto-instrumented**: `app/rag/`'s
+  own code (retrieval, chunking, ingestion) is instrumented at our own
+  boundaries, but the OpenInference LangChain/ChromaDB auto-instrumentors
+  are not enabled, so a slow internal Chroma call wouldn't show its own
+  span — only the enclosing `retrieval` span's total duration.
+- **Dashboard is read-only**: the Policies view displays registered
+  policies but has no create/edit form — registering a policy still goes
+  through `POST /api/v1/gate/policies` directly (curl, `/docs`, or a
+  future dashboard increment). Same for baseline approval — no "Approve
+  baseline" button in Run Detail yet, only the report download links and
+  "Run gate".
+- **Dashboard has no authentication** — it's an internal tool assumed to
+  run behind whatever network boundary/VPN protects the backend API
+  itself; nothing in `frontend/` adds its own auth layer.
 
 
 - Real-provider smoke validation: run `uv run pytest -v -m smoke` (or a
@@ -892,10 +1093,11 @@ Sprint 8 — Release Policy Engine and Regression Baselines: **complete**.
   pipeline has only been exercised against `DeterministicProvider` so far
   (real retrieval, canned generation); a real generation call through the
   RAG pipeline hasn't been manually validated yet.
-- Framework-backed evaluators still to add: Phoenix. RAGAS (Sprint 5),
-  DeepEval's G-Eval (Sprint 6), and the OpenAI-model-graded evaluators
-  (Sprint 7) all ship behind the same `Evaluator` protocol; Phoenix remains
-  the natural next signal to add the same way.
+- Framework-backed evaluators still to add: none currently planned. RAGAS
+  (Sprint 5), DeepEval's G-Eval (Sprint 6), and the OpenAI-model-graded
+  evaluators (Sprint 7) all ship behind the same `Evaluator` protocol.
+  Phoenix (Sprint 9) is observability infrastructure, not a
+  `MetricResult`-producing evaluator — see [[Sprint 9 decision 30]].
 - Real embeddings in practice: `OpenAIEmbeddings` exists and is wired
   through `AQG_RAG_EMBEDDINGS_PROVIDER=openai`, but hasn't been run
   against the corpus — `DeterministicEmbeddings` is the only embeddings
@@ -904,19 +1106,23 @@ Sprint 8 — Release Policy Engine and Regression Baselines: **complete**.
   `reference_context`) — Sprint 4 only proves chunks are retrieved/
   filtered correctly per scenario (see `test_unsupported_queries.py`),
   it doesn't score retrieval quality numerically.
-- Release policy engine: **resolved this sprint** — see the Sprint 8
-  section above and [[Sprint 8 decision 28]]/[[Sprint 8 decision 29]].
-- JSON/HTML evaluation report generation.
-- Observability integration (Arize Phoenix).
-- Persistent storage: **partially resolved this sprint** — policies,
+- Release policy engine: **resolved** (Sprint 8) — see
+  [[Sprint 8 decision 28]]/[[Sprint 8 decision 29]].
+- JSON/HTML evaluation report generation: **resolved** (Sprint 10) — see
+  the Sprint 10 section above.
+- Observability integration (Arize Phoenix): **resolved** (Sprint 9) — see
+  [[Sprint 9 decision 30]].
+- Persistent storage: **partially resolved** (Sprint 8) — policies,
   baselines, and gate decisions are SQLite-backed (`AQG_POLICY_DB_PATH`,
   defaulting to `:memory:`); golden datasets, evaluation runs, and
   per-case results are still `InMemoryRepository`-only and reset on
-  restart.
-- React engineering dashboard (frontend does not exist yet).
+  restart. (A run's `trace_id`, Sprint 9, is stored on the in-memory
+  `EvaluationRun` too — it survives exactly as long as the run itself
+  does, i.e. not across a restart.)
+- React engineering dashboard: **resolved** (Sprint 10) — see the Sprint
+  10 section above.
 - Docker packaging and GitHub Actions CI.
-- A `GET /api/v1/evaluations/runs` list endpoint (only "run" and "inspect
-  one run" exist).
+- A `GET /api/v1/evaluations/runs` list endpoint: **resolved** (Sprint 10).
 - Retries/backoff for transient live-provider failures (`rate_limit`,
   `unavailable`) — Sprint 3 normalizes and surfaces these but does not
   retry them; a case that hits one simply fails.
@@ -1093,6 +1299,52 @@ curl http://127.0.0.1:8000/api/v1/gate/decisions
 curl "http://127.0.0.1:8000/api/v1/gate/compare?run_id_a=$RUN_ID&run_id_b=$RUN_ID"
 ```
 
+Sprint 9's Phoenix tracing (opt-in, disabled by default; see
+`docs/debugging-failed-runs.md` for the full debugging workflow):
+
+```bash
+# run only the Sprint 9 / observability test suite (no network, no Phoenix needed)
+uv run pytest -v tests/observability/
+
+# start a local Phoenix instance (separate process - not a dependency of
+# this app; requires `pip install arize-phoenix` or `docker run -p
+# 6006:6006 arizephoenix/phoenix:latest` separately)
+phoenix serve  # or: docker run -p 6006:6006 arizephoenix/phoenix:latest
+
+# start the server with tracing enabled, pointed at that local Phoenix
+AQG_TRACING_ENABLED=true AQG_PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces \
+  uv run uvicorn app.main:app --reload
+
+# run an evaluation - the response's run.trace_id is the Phoenix trace id
+curl -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "customer_support_bot", "dataset_version": "1.1.0"}'
+# open http://localhost:6006 and search/filter by that trace id to see
+# the evaluation_run -> case -> provider_call/retrieval/evaluator spans
+```
+
+Sprint 10's reports and dashboard:
+
+```bash
+# run only the Sprint 10 / reports test suite (backend)
+uv run pytest -v tests/reports/ tests/api/test_reports_api.py
+
+# with the backend running, download a report for a decision (JSON or HTML)
+curl -o report.json http://127.0.0.1:8000/api/v1/reports/<decision_id>/json
+curl -o report.html http://127.0.0.1:8000/api/v1/reports/<decision_id>/html
+
+# list every evaluation run (Sprint 10's new list endpoint)
+curl http://127.0.0.1:8000/api/v1/evaluations/runs
+
+# frontend: install, test, build, and run the dashboard
+cd frontend
+npm install
+npm test        # Vitest + React Testing Library, 34 tests
+npm run build   # tsc -b && vite build
+npm run dev     # dev server, defaults to talking to http://localhost:8000/api/v1
+# (set VITE_API_BASE_URL to point at a different backend, e.g. in frontend/.env.local)
+```
+
 Interactive API docs at `/docs` (OpenAPI at `/openapi.json`).
 
 ## Important environment variables
@@ -1134,5 +1386,14 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_OPENAI_EVALS_LLM_MODEL` | unset (falls back to `AQG_OPENAI_MODEL`) | Judge model used for both grading calls |
 | `AQG_OPENAI_EVALS_STRUCTURED_CORRECTNESS_THRESHOLD` | `0.80` | Default pass/fail cutoff for the structured-correctness evaluator; a case can override it via `case.metadata["openai_grader_threshold"]` |
 | `AQG_POLICY_DB_PATH` | `:memory:` | SQLite file for policies/baselines/gate decisions. Relative paths resolve against the backend root. `:memory:` (the default) does not persist across restarts — set a real path (e.g. `data/quality_gate.db`) for actual persistence |
+| `AQG_TRACING_ENABLED` | `false` | Enables Phoenix/OpenTelemetry tracing. If setup fails (Phoenix unreachable, misconfigured endpoint) the app falls back to a no-op tracer rather than failing to start |
+| `AQG_PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006/v1/traces` | Where spans are exported. Only used when `AQG_TRACING_ENABLED=true` |
+| `AQG_PHOENIX_PROJECT_NAME` | `ai-quality-gate` | Project name spans are grouped under in the Phoenix UI |
+
+Frontend (`frontend/.env` or `.env.local`, read by Vite — not `AQG_`-prefixed):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_API_BASE_URL` | `http://localhost:8000/api/v1` | Backend base URL the dashboard's API client (`src/api/client.ts`) talks to |
 
 Settings are also loadable from a `backend/.env` file (not committed).

@@ -1217,3 +1217,193 @@ restart. Acceptable for this sprint (moving runs/case-results to SQLite
 too is exactly the natural next increment, using infrastructure this
 sprint already built) but worth flagging explicitly rather than leaving
 implicit.
+
+## Sprint 9 — Arize Phoenix Observability
+
+*(This section was missing from the repository's `DECISIONS.md` even
+though Sprint 9's code was committed and working — backfilled during
+Sprint 10's doc pass after noticing the gap while reading this file
+first, per this sprint's own instruction to do so.)*
+
+### 30. Tracing is OpenTelemetry-native with dependency-injected `Tracer`s, never global OTel state; Phoenix is a separate process this app only ever talks to over the network
+
+**Decision:** `app/observability/tracing.py`'s `configure_tracing()` is the
+entire integration surface. It returns a plain `opentelemetry.trace.Tracer`
+— never a Phoenix-specific type, never anything evaluation/RAG code has to
+know is Phoenix-flavored. When `AQG_TRACING_ENABLED=true`, it attempts
+`phoenix.otel.register(..., set_global_tracer_provider=False)` and returns
+`provider.get_tracer(...)`; on ANY exception, or when tracing is disabled,
+it returns OpenTelemetry's own built-in tracer (`trace.get_tracer(...)`
+with no provider ever registered), which is a genuine no-op implementation
+built into the OTel API itself, not something this codebase built. The
+returned `Tracer` — real or no-op — is threaded into `EvaluationRunner`
+and `Retriever` (via `build_retriever`) by ordinary constructor injection,
+the same pattern `Provider`/`Evaluator` implementations already use; it is
+never installed as OpenTelemetry's process-global tracer provider.
+
+The dependency added is `arize-phoenix-otel` (a thin ~dozen-function
+helper for constructing an OpenInference-flavored `TracerProvider`) plus
+`openinference-semantic-conventions` (attribute-name constants only) —
+explicitly NOT the full `arize-phoenix` package, which is the Phoenix
+*server* (a collector + storage + web UI), meant to run as its own process
+(locally via `phoenix serve`/`docker run arizephoenix/phoenix`, or as
+Phoenix Cloud) that this app only ever reaches over HTTP via the OTLP
+exporter `register()` configures. Nothing in this codebase runs or manages
+a Phoenix server.
+
+**Reason:** Two design questions, two independent answers:
+
+*Why dependency injection instead of `set_global_tracer_provider=True`
+(the `register()` default)?* OpenTelemetry's API only allows the global
+tracer provider to be set once per process; every call after the first is
+silently ignored with a warning. This codebase's own test suite calls
+`create_app()` — and would therefore call `configure_tracing()` — dozens
+of times across a single `pytest` run (see Sprint 8's identical concern
+about `Settings` being `@lru_cache`d process-wide). Relying on the global
+provider would mean whichever test happens to enable tracing first wins
+for the rest of the entire test session, regardless of what any later
+test's own `AQG_TRACING_ENABLED` setting says. Explicit injection
+sidesteps the one-time-global-state problem entirely: every `create_app()`
+call gets its own independent `Tracer` (or no-op), exactly like it already
+gets its own independent `PolicyRepository`/`EvaluationRunner`/everything
+else.
+
+*Why the thin `arize-phoenix-otel` helper and not the full `arize-phoenix`
+server package as a dependency?* This app is a tracing *producer*, not a
+tracing *backend*. Depending on the full server package would pull in a
+storage layer, a web server, and a UI this app never runs — Phoenix is
+meant to be operated as its own service, the same way this app doesn't
+vendor Postgres just because `AQG_POLICY_DB_PATH` can point at a database.
+`arize-phoenix-otel` is exactly the OTel-setup convenience layer a
+producer needs, and `openinference-semantic-conventions` is purely
+attribute-name constants so spans render correctly in Phoenix's LLM-aware
+UI without this codebase inventing its own attribute-naming scheme.
+
+**Alternatives considered:** Using raw `opentelemetry-sdk` directly instead
+of `arize-phoenix-otel` — rejected; it would work identically but require
+hand-rolling the same endpoint/protocol-inference logic `register()`
+already provides, for no benefit since the dependency is tiny either way.
+Wrapping `Provider.generate()` inside each of the four concrete provider
+classes individually, rather than once at `EvaluationRunner`'s call site —
+rejected; it would duplicate identical span-creation code four times for
+zero additional information. Auto-instrumenting LangChain/ChromaDB via
+`register(auto_instrument=True)` — deferred (see PROJECT_STATE.md
+"Outstanding work"); this sprint's `retrieval` span already gives
+visibility into retrieval as a whole, and auto-instrumenting a third-party
+library's internals is a separable increment with its own failure modes
+(version compatibility, instrumentation overhead) rather than something to
+bundle into the sprint that established the core tracing boundary.
+
+**Trade-off:** Because setup never uses the global tracer provider, any
+future code that reaches for `opentelemetry.trace.get_tracer(...)`
+directly (rather than receiving a `Tracer` through constructor injection)
+will silently get the no-op tracer even when Phoenix tracing is fully
+enabled — there is no ambient "just works" global tracer to fall back on.
+This is deliberate but means every new instrumented component has to
+remember to accept and use an injected `Tracer`, the same discipline
+`Provider`/`Evaluator` construction already requires.
+
+## Sprint 10 — Reports and Engineering Dashboard
+
+### 31. Reports are a pure presentation layer computed on demand, never persisted, never a second source of truth
+
+**Decision:** `app/reports/report.py`'s `build_report()` takes a
+`GateDecision` + its `EvaluationRun` + `CaseResult`s (all already fetched
+via `PolicyService`, which the sprint's `ReportService` composes over
+rather than duplicates) and assembles a `Report` — the same data,
+denormalized into one shape, plus a handful of cheap run-wide aggregates
+(pass rate, mean latency, total cost/tokens) that are trivial to derive
+from `case_results` and would otherwise be recomputed by every caller
+that wants them. Nothing about `Report` is stored anywhere: there is no
+`ReportRepository`, no SQLite table, no `report_id`. `GET /reports/{decision_id}/json`
+and `/html` compute a fresh `Report` on every request. `app/reports/html.py`
+renders the same `Report` as one self-contained HTML page using plain
+f-strings and `html.escape` — no Jinja2 or other template-engine
+dependency, matching the "isolated, dependency-light module" precedent
+`app/observability/` set in Sprint 9 for a similarly self-contained
+concern.
+
+**Reason:** A report is definitionally a *view* of a decision that already
+exists and is already the audited record of what happened — introducing a
+second persisted representation would mean two things to keep in sync
+(and two places a bug could make them disagree) for no benefit, since
+regenerating a `Report` from its `GateDecision`/`EvaluationRun`/`CaseResult`s
+is cheap and always produces an identical result. Skipping a template
+engine keeps the dependency surface small for a report whose shape rarely
+changes and whose renderer is under 200 lines; Jinja2 would be
+justified the moment reports need conditionals/loops complex enough that
+f-string composition becomes hard to read, which this report does not yet
+need.
+
+**Alternatives considered:** Persisting a `Report` row alongside
+`GateDecision` at decision-time (so downloading a report never re-touches
+`CaseResult`s) — rejected; it would make `Report` a second source of truth
+that could drift from the `GateDecision`/`CaseResult`s it was built from
+if either is ever edited or deleted later (not possible today, but the
+policy-CRUD outstanding-work item means policies *can* already change
+over a run's lifetime), and the recomputation cost here is negligible
+(a handful of dict lookups and a `sum()`/`mean()` over cases already held
+in memory). A templating library (Jinja2) — rejected for this sprint's
+report shape (see "Reason"); revisit if/when reports need more structure
+than the current linear metadata → aggregates → per-case-table layout.
+
+**Trade-off:** Because nothing is persisted, there is no way to list "all
+reports ever generated" the way `GET /gate/decisions` lists decisions —
+a report only exists at the moment it's requested, generated fresh from
+whatever `GateDecision`/`CaseResult` data is available then. This is
+consistent with reports being a *view*, not a *record*, but means a
+report can only ever be regenerated for as long as its underlying
+`GateDecision` and the run's `CaseResult`s are still around — for the
+in-memory run/case-result stores (see [[Sprint 8 decision 29]]'s
+trade-off), that means until the process restarts.
+
+### 32. The dashboard is a thin, read-mostly client with zero business logic of its own
+
+**Decision:** `frontend/` is a Vite + React + TypeScript single-page app
+that talks exclusively to the existing HTTP API (`src/api/client.ts`) —
+it computes nothing the backend doesn't already return, stores no state
+beyond what's needed to render the current page (a small `useApiData`
+hook wrapping loading/error/data, no Redux/Zustand/React Query), and owns
+no domain logic: a decision's PASS/WARN/BLOCK color, a run's pass rate, a
+policy's required metrics are all values the API already computed and the
+dashboard only displays. The one exception — the "Run gate" button in Run
+Detail — still just calls `POST /gate/decisions` and renders whatever
+`GateDecision` comes back; it does not evaluate anything client-side. All
+five views are read-oriented; the dashboard has no create/edit forms for
+policies or baselines this sprint (registering a policy or approving a
+baseline still goes through the API directly).
+
+**Reason:** This mirrors the same "thin presentation layer, no new source
+of truth" principle [[Sprint 10 decision 31]] applied to reports — the
+dashboard's entire job is to make the API's existing data legible to a
+human, not to introduce a second place business rules could live or drift
+from the backend's. Keeping it read-mostly for this first version also
+matches the sprint's own framing ("engineering-tool oriented, not
+marketing oriented") — an internal debugging/inspection tool needs to
+show state clearly far more urgently than it needs full CRUD workflows,
+and every additional mutation surface (create policy, approve baseline
+from a form) is its own scope of validation/error-handling/testing that
+the sprint's time was better spent on the five required views and their
+tests.
+
+**Alternatives considered:** A heavier state-management library (Redux,
+Zustand, React Query/TanStack Query) — rejected as unjustified for five
+mostly-independent, mostly-read-only views with no complex cross-view
+shared state or cache-invalidation needs; a bespoke ~25-line hook covers
+every page's loading/error/data needs identically. Adding
+create-policy/approve-baseline forms to the dashboard now — deferred, not
+rejected outright (see PROJECT_STATE.md "Outstanding work") — the API
+already supports both, so this is a real next increment, just not one
+this sprint's explicit five-view/report scope required. Server-rendering
+(Next.js or similar) instead of a client-rendered SPA — rejected; this is
+an internal tool consumed by engineers who already have direct API/`/docs`
+access, not a public-facing product where SEO/first-paint performance
+would justify the added deployment complexity of a Node server.
+
+**Trade-off:** Every page's data is fetched fresh on mount with no
+caching/deduplication across navigations — clicking between Overview and
+Evaluation Runs re-fetches the runs list each time rather than reusing a
+shared cache. Acceptable at this dashboard's expected scale and update
+frequency (an internal tool polled by a handful of engineers, not a
+high-traffic product surface); a caching layer (React Query or similar)
+is the natural upgrade if that stops being true.
