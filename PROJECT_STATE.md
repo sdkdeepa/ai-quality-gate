@@ -219,8 +219,6 @@ See [[Sprint 8 decision 28]] for the full design (why several checks are
 hard-BLOCK-only while others are policy-configurable) and
 [[Sprint 8 decision 29]] for the SQLite persistence approach.
 
-`AQG_CORS_ORIGINS=http://localhost:5173`
-
 **Phoenix observes; it never decides (Sprint 9):** `app/observability/tracing.py`
 is the only module that imports `phoenix`/`openinference`/`opentelemetry`
 for setup — `configure_tracing()` returns a plain `opentelemetry.trace.Tracer`,
@@ -1389,6 +1387,7 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_TRACING_ENABLED` | `false` | Enables Phoenix/OpenTelemetry tracing. If setup fails (Phoenix unreachable, misconfigured endpoint) the app falls back to a no-op tracer rather than failing to start |
 | `AQG_PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006/v1/traces` | Where spans are exported. Only used when `AQG_TRACING_ENABLED=true` |
 | `AQG_PHOENIX_PROJECT_NAME` | `ai-quality-gate` | Project name spans are grouped under in the Phoenix UI |
+| `AQG_CORS_ORIGINS` | `""` (empty) | Comma-separated browser origins allowed to call the API cross-origin (e.g. `http://localhost:5173` for the dashboard in dev). Empty means no CORS headers are sent at all |
 
 Frontend (`frontend/.env` or `.env.local`, read by Vite — not `AQG_`-prefixed):
 
