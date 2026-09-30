@@ -12,7 +12,7 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 10 — Reports and Engineering Dashboard: complete.**
+**Sprint 11 — Docker and GitHub Actions CI/CD: complete.**
 
 The service loads versioned golden datasets from disk and grades
 system-under-test responses with 8 deterministic evaluators (exact/
@@ -49,7 +49,16 @@ observes, never decides (see `docs/debugging-failed-runs.md`). Every
 Evaluation Runs, Run Detail, Policies, Datasets) — gives a read-oriented
 view over the whole system, entirely as a thin client over this same API.
 A small LangChain + ChromaDB RAG pipeline exists as a system under test.
-See `PROJECT_STATE.md` for full capability detail and outstanding work.
+Both services have production Dockerfiles (non-root, health-checked, no
+baked-in secrets) plus a `docker-compose.yml` for local/self-hosted use,
+and GitHub Actions runs a fully deterministic PR pipeline (lint, backend
+unit + API tests, frontend tests, an end-to-end smoke suite, Docker build
+validation, and coverage reporting) that never requires a paid model API
+— a separate, manual-only workflow handles live-provider evaluation
+against real API keys, gated by repository secrets and failing the job on
+a BLOCK decision. See `docs/ci-cd.md` for the deterministic-vs-live
+breakdown, secrets setup, and cost controls, and `PROJECT_STATE.md` for
+full capability detail and outstanding work.
 
 See [`PROJECT_STATE.md`](PROJECT_STATE.md) for current architecture,
 completed capabilities, outstanding work, and exact run commands, and
@@ -78,13 +87,28 @@ npm test       # Vitest + React Testing Library
 npm run build  # production build (tsc -b && vite build)
 ```
 
+Or run both together with Docker Compose (no local Python/Node setup
+needed at all):
+
+```bash
+cp .env.example .env   # every value is optional
+docker compose up --build
+# backend at http://localhost:8000, dashboard at http://localhost:5173
+```
+
+See `docs/ci-cd.md` for how CI runs the same checks automatically (and
+how the separate, manual, secrets-gated live-evaluation workflow works).
+
 ## Repository layout
 
 ```
 ai-quality-gate/
 ├── PROJECT_STATE.md   # architecture, capabilities, outstanding work, run commands
 ├── DECISIONS.md        # architecture decision log
-├── docs/                # task-oriented guides (e.g. debugging-failed-runs.md)
-├── frontend/            # React/TypeScript internal engineering dashboard
-└── backend/            # FastAPI service (domain model, API, tests)
+├── docker-compose.yml   # local/self-hosted backend + frontend orchestration
+├── .github/workflows/    # deterministic PR CI + manual live-evaluation workflow
+├── scripts/              # smoke_test.sh - deterministic end-to-end smoke suite
+├── docs/                # task-oriented guides (debugging-failed-runs.md, ci-cd.md)
+├── frontend/            # React/TypeScript internal engineering dashboard (+ Dockerfile)
+└── backend/            # FastAPI service (domain model, API, tests) (+ Dockerfile)
 ```

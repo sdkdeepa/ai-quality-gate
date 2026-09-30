@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-09-19 (Sprint 10 complete)
+Last updated: 2026-09-21 (Sprint 11 complete)
 
 ## Current architecture
 
@@ -9,10 +9,23 @@ ai-quality-gate/
 ├── PROJECT_STATE.md          # this file
 ├── DECISIONS.md               # architecture decision log
 ├── README.md
+├── .env.example                # Sprint 11: every configurable env var, documented, no real values
+├── docker-compose.yml          # Sprint 11: backend + frontend orchestration for local/self-hosted use
+├── .github/
+│   └── workflows/
+│       ├── pr.yml                 # Sprint 11: deterministic CI (lint, tests, smoke suite, Docker build, coverage)
+│       └── live-eval.yml          # Sprint 11: manual-only, secrets-gated live-provider evaluation
+├── scripts/
+│   └── smoke_test.sh           # Sprint 11: deterministic end-to-end smoke suite against a running instance
 ├── docs/
-│   └── debugging-failed-runs.md  # Sprint 9: task-oriented Phoenix debugging guide
+│   ├── debugging-failed-runs.md  # Sprint 9: task-oriented Phoenix debugging guide
+│   └── ci-cd.md                   # Sprint 11: deterministic vs. live CI, secrets, cost controls
 ├── frontend/                  # Sprint 10 — React/TypeScript engineering dashboard (see below)
+│   ├── Dockerfile               # Sprint 11: Node build stage -> nginx-unprivileged runtime (non-root)
+│   ├── docker-entrypoint.sh     # Sprint 11: writes env-config.js from API_BASE_URL at container start
+│   └── nginx.conf               # Sprint 11: static-file serving config
 └── backend/
+    ├── Dockerfile              # Sprint 11: uv build stage -> slim runtime (non-root uid 1000, HEALTHCHECK)
     ├── pyproject.toml         # uv-managed project, deps + ruff + pytest config
     ├── README.md
     ├── datasets/               # versioned golden dataset JSON files (data, not code)
@@ -250,6 +263,19 @@ principle taken further: it is a thin client over the existing HTTP API
 (`api/client.ts`), with no server-side logic of its own — every number the
 dashboard shows is something `GET /api/v1/...` already returned.
 
+**CI/CD packages and validates; it never changes what a PASS/WARN/BLOCK
+means (Sprint 11):** `.github/workflows/pr.yml` and `backend/Dockerfile`/
+`frontend/Dockerfile` are entirely about *how the existing app gets built,
+tested, and run* — none of them touch `app/policy/`'s decision logic, add
+a new evaluation path, or introduce a second way to compute a
+`GateDecision`. `scripts/smoke_test.sh` calls the same `/api/v1/...`
+endpoints any other client would; it has no special access or shortcut.
+The one workflow that *does* touch real evaluation data,
+`live-eval.yml`, still goes through the ordinary `POST /evaluations/runs` →
+`POST /gate/decisions` → `GET /reports/.../json`|`html` sequence — it is a
+scripted *caller* of the API, not a different code path through it. See
+[[Sprint 11 decision 33]] and [[Sprint 11 decision 34]].
+
 **Provider boundary (Sprint 3):** `app/providers/base.py` defines the
 `Provider` protocol — `name`, `model`, `generate(ProviderRequest) ->
 ProviderResponse`. `DeterministicProvider`, `OpenAIProvider`, and
@@ -275,7 +301,7 @@ with the same 8 deterministic evaluators as everything else — no
 RAG-specific evaluator, no RAG-specific branch in the runner. See
 [[Sprint 4 decision 17]] for exactly where LangChain is used vs. our own code.
 
-## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7 + Sprint 8 + Sprint 9 + Sprint 10)
+## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7 + Sprint 8 + Sprint 9 + Sprint 10 + Sprint 11)
 
 **Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
@@ -993,9 +1019,80 @@ debugging guide, which was already present.)*
   directly), authentication/authorization for the dashboard itself,
   Docker/deployment packaging for the frontend.
 
+**Sprint 11 — Docker and GitHub Actions CI/CD:**
+- **Docker**: `backend/Dockerfile` (multi-stage `uv` build → slim
+  runtime, non-root uid 1000, `HEALTHCHECK` against `GET /health`) and
+  `frontend/Dockerfile` (Node build stage → `nginxinc/nginx-unprivileged`
+  runtime, non-root by construction, port 8080). Neither image bakes in a
+  secret — every credential/config value is read from the environment at
+  container *start*, never COPYed/ARGed at build time; both have a
+  `.dockerignore` excluding `.env*`. `docker-compose.yml` (repo root)
+  orchestrates both services with named volumes for the SQLite/Chroma
+  stores, health-check-gated startup ordering, and everything
+  credentialed via a git-ignored `.env` (see the new `.env.example`).
+- **A real design gap found and fixed**: Vite bakes `VITE_API_BASE_URL`
+  in at *build* time, but a Docker image needs to be configurable per-
+  deployment at *runtime* without rebuilding. Fixed with the standard
+  pattern: `frontend/docker-entrypoint.sh` writes a small
+  `env-config.js` (setting `window.__APP_CONFIG__`) from the
+  container's `API_BASE_URL` env var at startup, and
+  `src/api/client.ts`'s `API_BASE_URL` now prefers that runtime value
+  over the build-time `VITE_API_BASE_URL`, falling back to the same
+  hardcoded default as before outside Docker. 4 new tests cover the
+  precedence (`src/api/__tests__/runtimeConfig.test.ts`).
+- **`scripts/smoke_test.sh`** (requirement #5, "deterministic Quality Gate
+  smoke suite"): exercises the REAL running HTTP API end to end — health
+  check → run a deterministic evaluation → confirm it's listed → run the
+  gate → download and validate both report formats — using only the
+  deterministic provider (no API keys, no cost). Deliberately reusable
+  against *either* a plain `uv run uvicorn` process or a built Docker
+  container (it just takes a base URL), so the same script backs both
+  the "smoke suite" and "Docker build validation" CI jobs rather than
+  duplicating the checks. Manually run against a live local instance
+  multiple times during this sprint and confirmed working end to end
+  (including surfacing a real, then-fixed, Python quoting bug in an
+  early draft of one of the CI workflow's inline scripts — see below).
+- **`.github/workflows/pr.yml`**: the deterministic CI pipeline, all 7
+  requirements as separate jobs — lint/formatting, backend unit tests
+  (`tests/` excluding `tests/api/`), backend API/integration tests
+  (`tests/api/`), frontend tests, the smoke suite (job above, against a
+  plain `uv run` process), Docker build validation (builds both images,
+  then runs the *same* smoke script against the actual built backend
+  container, plus confirms the frontend container's `env-config.js`
+  correctly reflects an injected `API_BASE_URL`), and a coverage summary
+  job (uploads `pytest-cov`/`@vitest/coverage-v8` reports as artifacts,
+  no threshold enforced — see "Outstanding work"). No job in this file
+  ever references `secrets.AQG_OPENAI_API_KEY`/`AQG_GEMINI_API_KEY` —
+  grep-able, not just claimed.
+- **`.github/workflows/live-eval.yml`**: manual-only
+  (`workflow_dispatch`, never a PR/push trigger) live-provider evaluation
+  workflow. Validates the required secret is set before spending
+  anything; runs the chosen dataset through a real `openai`/`gemini`
+  provider with deterministic evaluators only (no RAGAS/DeepEval/OpenAI-
+  Evals judge frameworks enabled, to avoid multiplying per-run cost);
+  shows PASS/WARN/BLOCK as both a GitHub Actions annotation
+  (`::notice`/`::warning`/`::error`) and a full job summary; uploads
+  JSON+HTML reports as artifacts regardless of outcome; and **fails the
+  job if the decision is BLOCK** as its last step, so the report/artifact
+  steps above it always complete first.
+- **`docs/ci-cd.md`** (requirement: "Document deterministic CI, live CI,
+  secrets, and cost controls"): the deterministic-vs-live comparison
+  table, what each `pr.yml` job does and why, how to trigger
+  `live-eval.yml` and set its two secrets, and the specific cost controls
+  in place (manual trigger only, no judge frameworks, pinned cheap
+  models, a named/bounded dataset per run).
+- Coverage tooling added: `pytest-cov` (backend, ~98% at the time of this
+  sprint) and `@vitest/coverage-v8` (frontend, ~90%) — both configured
+  and verified working, reports uploaded as CI artifacts. No hard
+  threshold enforced yet (see "Outstanding work").
+- Explicitly out of scope per the sprint plan (deferred, not attempted):
+  publishing built Docker images to a registry, a release/tagging
+  workflow, enforcing a coverage threshold, a matrix run across multiple
+  datasets/providers in one `live-eval.yml` trigger.
+
 ## Current sprint
 
-Sprint 10 — Reports and Engineering Dashboard: **complete**.
+Sprint 11 — Docker and GitHub Actions CI/CD: **complete**.
 
 ## Outstanding work (future sprints, not started)
 
@@ -1080,6 +1177,25 @@ Sprint 10 — Reports and Engineering Dashboard: **complete**.
 - **Dashboard has no authentication** — it's an internal tool assumed to
   run behind whatever network boundary/VPN protects the backend API
   itself; nothing in `frontend/` adds its own auth layer.
+- **Docker images aren't published to a registry**: `docker-build` in
+  `pr.yml` builds and smoke-tests both images on every PR but never
+  pushes them anywhere — there's no `docker push`/registry credential/
+  release-tagging step yet. See `docs/ci-cd.md`.
+- **No coverage threshold enforced**: `pytest-cov`/`@vitest/coverage-v8`
+  reports are generated and uploaded as CI artifacts every PR, but
+  nothing fails a PR for a coverage regression yet — see `docs/ci-cd.md`
+  for the ~98%/~90% baseline this sprint measured, which a future
+  threshold or ratchet could be set against.
+- **Live evaluation is single-dataset, single-provider per trigger**:
+  `live-eval.yml` runs one `dataset_name`/`dataset_version` against one
+  provider per manual trigger; there's no matrix mode to cover several
+  combinations in one run.
+- **RAGAS/DeepEval/OpenAI-Evals judge frameworks are never enabled in
+  either CI workflow**: `pr.yml` obviously can't (deterministic only,
+  by design); `live-eval.yml` also leaves them off by default to avoid
+  multiplying per-run cost with judge-model calls — enabling them for a
+  specific live run means editing the workflow file directly for now,
+  not a request-time choice.
 
 
 - Real-provider smoke validation: run `uv run pytest -v -m smoke` (or a
@@ -1119,7 +1235,8 @@ Sprint 10 — Reports and Engineering Dashboard: **complete**.
   does, i.e. not across a restart.)
 - React engineering dashboard: **resolved** (Sprint 10) — see the Sprint
   10 section above.
-- Docker packaging and GitHub Actions CI.
+- Docker packaging and GitHub Actions CI: **resolved** (Sprint 11) — see
+  the Sprint 11 section above.
 - A `GET /api/v1/evaluations/runs` list endpoint: **resolved** (Sprint 10).
 - Retries/backoff for transient live-provider failures (`rate_limit`,
   `unavailable`) — Sprint 3 normalizes and surfaces these but does not
@@ -1345,6 +1462,29 @@ npm run dev     # dev server, defaults to talking to http://localhost:8000/api/v
 
 Interactive API docs at `/docs` (OpenAPI at `/openapi.json`).
 
+Sprint 11's Docker/CI (see `docs/ci-cd.md` for the full deterministic-vs-
+live comparison, secrets, and cost controls):
+
+```bash
+# run everything Docker Compose orchestrates (backend + frontend)
+cp .env.example .env   # then fill in only what you need - all optional
+docker compose up --build
+# backend at http://localhost:8000, dashboard at http://localhost:5173
+
+# the deterministic smoke suite, against any running instance
+bash scripts/smoke_test.sh http://localhost:8000
+
+# build and smoke-test each image directly (what pr.yml's "Docker build
+# validation" job does)
+docker build -t ai-quality-gate-backend:local ./backend
+docker build -t ai-quality-gate-frontend:local ./frontend
+
+# trigger the manual, secrets-gated live evaluation workflow (requires
+# AQG_OPENAI_API_KEY/AQG_GEMINI_API_KEY set as repository secrets first)
+gh workflow run live-eval.yml -f provider=openai \
+  -f dataset_name=customer_support_bot -f dataset_version=1.1.0
+```
+
 ## Important environment variables
 
 All are optional; sane defaults are used if unset. Prefix: `AQG_`.
@@ -1393,6 +1533,7 @@ Frontend (`frontend/.env` or `.env.local`, read by Vite — not `AQG_`-prefixed)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VITE_API_BASE_URL` | `http://localhost:8000/api/v1` | Backend base URL the dashboard's API client (`src/api/client.ts`) talks to |
+| `VITE_API_BASE_URL` | `http://localhost:8000/api/v1` | Backend base URL the dashboard's API client (`src/api/client.ts`) talks to, at **build** time (local `npm run dev`/`npm run build`) |
+| `API_BASE_URL` | (none) | **Docker only** (Sprint 11) — read by `frontend/docker-entrypoint.sh` at **container start**, not build time, and written into `env-config.js` so one built image can be pointed at any backend without a rebuild. Takes priority over `VITE_API_BASE_URL` when both are present — see [[Sprint 11 decision 33]] |
 
 Settings are also loadable from a `backend/.env` file (not committed).
