@@ -8,10 +8,23 @@ import type {
   RunSummary,
 } from './types'
 
-// Configurable so the built dashboard can point at any deployed backend
-// without a rebuild-time constant baked in for local dev only.
+declare global {
+  interface Window {
+    // Written by docker-entrypoint.sh at container startup (see
+    // index.html / public/env-config.js); absent or empty outside Docker.
+    __APP_CONFIG__?: { API_BASE_URL?: string }
+  }
+}
+
+// Resolution order: a Docker container's runtime-injected config (so one
+// built image can be pointed at any backend without a rebuild) -> Vite's
+// build-time env var (local dev / a build meant for one fixed backend) ->
+// the local-dev default. See Sprint 11's DECISIONS.md entry for why a
+// runtime value takes priority over the build-time one.
 export const API_BASE_URL: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000/api/v1'
+  window.__APP_CONFIG__?.API_BASE_URL ||
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+  'http://localhost:8000/api/v1'
 
 export class ApiError extends Error {
   status: number

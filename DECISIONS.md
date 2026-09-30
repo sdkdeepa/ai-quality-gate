@@ -1407,3 +1407,123 @@ shared cache. Acceptable at this dashboard's expected scale and update
 frequency (an internal tool polled by a handful of engineers, not a
 high-traffic product surface); a caching layer (React Query or similar)
 is the natural upgrade if that stops being true.
+
+## Sprint 11 — Docker and GitHub Actions CI/CD
+
+### 33. The frontend Docker image resolves its API URL at container start, not build time — one image, many deployments
+
+**Decision:** `frontend/docker-entrypoint.sh` runs before nginx starts and
+writes `/usr/share/nginx/html/env-config.js` from the container's
+`API_BASE_URL` environment variable, setting `window.__APP_CONFIG__ =
+{ API_BASE_URL: "..." }`. `index.html` loads this via a plain `<script>`
+tag before `src/main.tsx`, and `src/api/client.ts`'s `API_BASE_URL`
+resolves in this order: `window.__APP_CONFIG__.API_BASE_URL` (Docker,
+runtime) → `import.meta.env.VITE_API_BASE_URL` (Vite's own build-time
+env, for local `npm run dev`/`npm run build`) → a hardcoded
+`http://localhost:8000/api/v1` default. A committed stub
+(`frontend/public/env-config.js`, `window.__APP_CONFIG__ = {}`) means
+`index.html`'s script tag never 404s outside Docker; the entrypoint
+overwrites that file fresh on every container start.
+
+**Reason:** Vite inlines every `import.meta.env.VITE_*` reference at
+*build* time — there is no way to change one after `npm run build` has
+run, short of rebuilding. That's fine for local development (one machine,
+one backend), but wrong for a Docker image specifically: the entire point
+of building an image once is deploying that same artifact to multiple
+places (a laptop, a staging environment, a teammate's machine) — each of
+which needs a different backend URL. Baking `VITE_API_BASE_URL` into the
+image at build time would mean a separate image build per environment,
+defeating "build once, deploy anywhere," which is the whole reason to
+containerize the frontend in the first place. This was a genuine gap
+until it was noticed and fixed during this sprint's Docker work — nothing
+about it was in the original Sprint 10 dashboard, since Sprint 10 had no
+Docker packaging to expose the problem.
+
+**Alternatives considered:** Requiring a rebuild per deployment target
+(pass `--build-arg VITE_API_BASE_URL=...` to `docker build`) — rejected;
+this makes the built image itself deployment-specific, contradicting the
+premise of a portable container image, and would mean CI's "Docker build
+validation" job either can't test the real deployment path or has to pick
+one arbitrary URL to bake in. A reverse-proxy/rewrite approach (nginx
+proxies `/api/*` to the backend, so the frontend always calls its own
+origin's `/api/*` and never needs to know the backend's real address) —
+a reasonable alternative for a same-origin deployment, but rejected for
+now because it constrains the two containers to always sit behind one
+shared ingress; the runtime-`env-config.js` approach works whether the
+backend is same-origin, a different port on the same host, or a
+completely different domain, without forcing a particular deployment
+topology. A server-rendered/templated `index.html` (e.g. via `envsubst`
+directly on `index.html` at container start) — rejected as marginally
+simpler but less explicit than a dedicated `env-config.js`: a separate,
+tiny, purpose-built file is easier to reason about, test
+(`runtimeConfig.test.ts` imports `client.ts` fresh with different
+`window.__APP_CONFIG__` values and asserts the precedence directly), and
+debug (`curl http://host/env-config.js` shows exactly what a running
+container resolved, without needing to diff a templated HTML file against
+its source).
+
+**Trade-off:** Every page load now makes one extra tiny request
+(`env-config.js`, a few dozen bytes, served with `Cache-Control: no-store`
+so a redeployed/reconfigured container is never served from a stale
+browser cache) before the app's own bundle can resolve its API base URL.
+Negligible in practice (it's static, same-origin, and nginx serves it
+instantly) but worth naming as the one thing this buys at a small,
+constant cost on every page load.
+
+### 34. `scripts/smoke_test.sh` is the single source of truth for "is a running instance actually healthy," reused by both the plain-process and Docker-image CI jobs
+
+**Decision:** `scripts/smoke_test.sh` takes one argument (a base URL) and
+exercises the real, running HTTP API end to end: `GET /health` → `POST
+/evaluations/runs` (deterministic provider) → `GET /evaluations/runs`
+(confirm the new run is listed) → `POST /gate/decisions` → `GET
+/reports/{id}/json` and `/html` (confirm both parse/look right). It makes
+no assumption about *how* the server at that URL was started — a bare
+`uv run uvicorn`, a `docker run` container, anything else that speaks
+HTTP on that port. `.github/workflows/pr.yml`'s "smoke-suite" job runs it
+against a plain `uv run` process; the "docker-build" job runs the exact
+same script, unmodified, against the actual built backend container.
+
+**Reason:** Sprint 11 asked for two related but distinct things: a
+"deterministic Quality Gate smoke suite" (requirement #5) and "Docker
+build validation" (requirement #6). Writing two separate smoke-check
+implementations — one pytest-flavored, one shell/curl-flavored for
+Docker — would mean maintaining two things that are supposed to answer
+the same underlying question ("does a running instance actually work
+end-to-end") and could silently drift apart (one checking something the
+other doesn't, a bug the Docker check catches that the plain-process
+check wouldn't, or vice versa). A single script parameterized only by
+base URL sidesteps that: the *exact* same assertions run in both CI jobs,
+so "the smoke suite passed against `uv run` but the Docker image is
+still broken" (or the reverse) is something the docker-build job would
+actually catch, not something it takes on faith from the other job's
+result. It also means one bug — this sprint had a real one, an f-string
+that nested the same quote character inside a Python one-liner embedded
+in a bash heredoc, which is invalid Python — only needed fixing (and
+re-verifying against a live server) once, not once per copy.
+
+**Alternatives considered:** A pytest-based smoke test using `httpx`
+against a live server, run via `pytest -m smoke` — rejected as the
+primary implementation for this specific requirement, even though it
+would fit the existing test-tooling conventions better; the sprint
+explicitly separates "backend unit tests"/"API tests" (which already
+cover request/response correctness via `TestClient`, in-process) from a
+"smoke suite" whose whole value is exercising a *real*, externally
+reachable process — a bespoke shell script makes that distinction
+unambiguous, and (practically) a shell script is trivial to hand to
+`docker run`'s output or any other non-Python-process target later,
+where importing pytest fixtures would not be. Separate scripts per CI job
+— rejected per "Reason" above. Writing the checks directly inline in the
+YAML `run:` blocks rather than a standalone script — rejected; a
+standalone script is runnable identically by a developer locally
+(`bash scripts/smoke_test.sh http://localhost:8000`) without needing to
+read or copy-paste out of a workflow file, and was in fact run and
+re-verified by hand against a live local server multiple times while
+developing this sprint, which inline YAML steps would have made far more
+tedious to iterate on.
+
+**Trade-off:** The script asserts against one specific dataset
+(`customer_support_bot@1.1.0`) rather than being fully dataset-agnostic —
+reasonable for "does the pipeline work at all," but it means the smoke
+suite would need a small edit if that dataset were ever renamed or
+removed, rather than automatically adapting to whatever datasets happen
+to be loaded.

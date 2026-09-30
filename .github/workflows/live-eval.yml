@@ -1,0 +1,178 @@
+name: Live Evaluation (manual)
+
+# Opt-in only: `workflow_dispatch` means this NEVER runs automatically on a
+# PR or push - it only runs when a human explicitly triggers it from the
+# Actions tab (or `gh workflow run`). This is deliberate: it's the only
+# workflow in this repo that calls a real, billed LLM API, and Sprint 11's
+# "Do NOT require paid model APIs for every PR" requirement means this
+# must never be able to fire on its own. See docs/ci-cd.md for the full
+# cost-control rationale and secrets setup.
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Which live provider to evaluate against"
+        required: true
+        default: "openai"
+        type: choice
+        options: [openai, gemini]
+      dataset_name:
+        description: "Golden dataset name"
+        required: true
+        default: "customer_support_bot"
+      dataset_version:
+        description: "Golden dataset version"
+        required: true
+        default: "1.1.0"
+      policy_id:
+        description: "Policy id to gate against (blank = whatever is active)"
+        required: false
+        default: ""
+
+jobs:
+  live-evaluation:
+    name: Run live evaluation (${{ github.event.inputs.provider }})
+    runs-on: ubuntu-latest
+    # Repository secrets are only ever referenced here, in the one
+    # workflow a human has to manually trigger - never in pr.yml.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      - name: Sync dependencies
+        working-directory: backend
+        run: uv sync
+
+      - name: Validate required secret is present
+        run: |
+          if [ "${{ github.event.inputs.provider }}" = "openai" ] && [ -z "${{ secrets.AQG_OPENAI_API_KEY }}" ]; then
+            echo "::error::AQG_OPENAI_API_KEY secret is not set - see docs/ci-cd.md" 
+            exit 1
+          fi
+          if [ "${{ github.event.inputs.provider }}" = "gemini" ] && [ -z "${{ secrets.AQG_GEMINI_API_KEY }}" ]; then
+            echo "::error::AQG_GEMINI_API_KEY secret is not set - see docs/ci-cd.md"
+            exit 1
+          fi
+
+      # Cost control: no RAGAS/DeepEval/OpenAI-Evals judge frameworks are
+      # enabled here, and the model is pinned to the cheapest tier of
+      # each provider - this workflow evaluates the SYSTEM's answers with
+      # deterministic evaluators only. Enabling judge-model frameworks
+      # here would multiply the per-run cost (an extra LLM call per
+      # metric per case) for a manually-triggered workflow whose whole
+      # point is a controlled, bounded cost - see docs/ci-cd.md if you
+      # want to opt into that deliberately for a specific run.
+      - name: Start the API with the live provider's key
+        working-directory: backend
+        env:
+          AQG_OPENAI_API_KEY: ${{ secrets.AQG_OPENAI_API_KEY }}
+          AQG_OPENAI_MODEL: gpt-4o-mini
+          AQG_GEMINI_API_KEY: ${{ secrets.AQG_GEMINI_API_KEY }}
+          AQG_GEMINI_MODEL: gemini-2.5-flash
+        run: |
+          uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          echo $! > /tmp/uvicorn.pid
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:8000/health && exit 0
+            sleep 1
+          done
+          echo "server did not become healthy in time" >&2
+          exit 1
+
+      - name: Run the evaluation against the live provider
+        id: run_eval
+        run: |
+          BODY=$(python3 -c "
+          import json
+          print(json.dumps({
+              'dataset_name': '${{ github.event.inputs.dataset_name }}',
+              'dataset_version': '${{ github.event.inputs.dataset_version }}',
+              'provider': '${{ github.event.inputs.provider }}',
+          }))
+          ")
+          RESPONSE=$(curl --fail --silent --show-error -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
+            -H "Content-Type: application/json" -d "$BODY")
+          echo "$RESPONSE" > /tmp/run_response.json
+          RUN_ID=$(echo "$RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["run"]["id"])')
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Evaluated $(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d['passed_count']) + '/' + str(d['case_count']) + ' cases passed')")"
+
+      - name: Run the gate
+        id: run_gate
+        run: |
+          POLICY_ID="${{ github.event.inputs.policy_id }}"
+          BODY=$(python3 -c "
+          import json
+          body = {'run_id': '${{ steps.run_eval.outputs.run_id }}'}
+          policy_id = '${POLICY_ID}'.strip()
+          if policy_id:
+              body['policy_id'] = policy_id
+          print(json.dumps(body))
+          ")
+          RESPONSE=$(curl --fail --silent --show-error -X POST http://127.0.0.1:8000/api/v1/gate/decisions \
+            -H "Content-Type: application/json" -d "$BODY")
+          echo "$RESPONSE" > /tmp/decision_response.json
+          DECISION_ID=$(echo "$RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          STATUS=$(echo "$RESPONSE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+          echo "decision_id=${DECISION_ID}" >> "$GITHUB_OUTPUT"
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+      # Clearly show PASS/WARN/BLOCK (Sprint 11 requirement), both as a
+      # visible job summary and as an explicit GitHub Actions annotation
+      # so it's impossible to miss when scanning workflow run history.
+      - name: Show the gate decision
+        run: |
+          STATUS="${{ steps.run_gate.outputs.status }}"
+          {
+            echo "## Gate decision: ${STATUS}"
+            echo ""
+            echo "- Provider: \`${{ github.event.inputs.provider }}\`"
+            echo "- Dataset: \`${{ github.event.inputs.dataset_name }}@${{ github.event.inputs.dataset_version }}\`"
+            echo "- Run: \`${{ steps.run_eval.outputs.run_id }}\`"
+            echo "- Decision: \`${{ steps.run_gate.outputs.decision_id }}\`"
+            echo ""
+            echo '```json'
+            python3 -m json.tool /tmp/decision_response.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          case "$STATUS" in
+            pass) echo "::notice title=Gate decision::PASS" ;;
+            warn) echo "::warning title=Gate decision::WARN" ;;
+            block) echo "::error title=Gate decision::BLOCK" ;;
+          esac
+
+      - name: Download JSON and HTML reports
+        run: |
+          mkdir -p /tmp/reports
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:8000/api/v1/reports/${{ steps.run_gate.outputs.decision_id }}/json" \
+            -o "/tmp/reports/report-${{ steps.run_eval.outputs.run_id }}.json"
+          curl --fail --silent --show-error \
+            "http://127.0.0.1:8000/api/v1/reports/${{ steps.run_gate.outputs.decision_id }}/html" \
+            -o "/tmp/reports/report-${{ steps.run_eval.outputs.run_id }}.html"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: live-evaluation-reports-${{ github.run_id }}
+          path: /tmp/reports/
+          retention-days: 30
+
+      - name: Stop the API
+        if: always()
+        run: kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true
+
+      # Requirement: "fail when GateDecision is BLOCK" - this is the last
+      # step specifically so every step above (including report upload)
+      # still runs even on a BLOCK; only the overall job/workflow result
+      # turns red.
+      - name: Fail the job if the gate decision was BLOCK
+        run: |
+          if [ "${{ steps.run_gate.outputs.status }}" = "block" ]; then
+            echo "::error::Gate decision was BLOCK - see the job summary and uploaded reports."
+            exit 1
+          fi

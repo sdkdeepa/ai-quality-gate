@@ -1,0 +1,277 @@
+name: PR Checks
+
+# Deterministic CI (Sprint 11 requirement): every job here uses only the
+# DeterministicProvider (fixture-replay) or pure static analysis - nothing
+# in this file ever calls a real OpenAI/Gemini/RAGAS-judge/DeepEval-judge/
+# OpenAI-Evals-judge API, so no repository secret is required for this
+# workflow to run, and it never incurs cost. The manual, secrets-gated
+# live-provider workflow is a separate file - see .github/workflows/live-eval.yml
+# and docs/ci-cd.md.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  # --- 1. lint / formatting ---
+  lint:
+    name: Lint & formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      - name: Backend - ruff check
+        working-directory: backend
+        run: uv run ruff check .
+
+      - name: Backend - ruff format --check
+        working-directory: backend
+        run: uv run ruff format --check .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend - install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend - lint (oxlint)
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Frontend - type-check
+        working-directory: frontend
+        run: npx tsc -b
+
+  # --- 2. backend unit tests ---
+  backend-unit-tests:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      - name: Sync dependencies
+        working-directory: backend
+        run: uv sync
+
+      # Everything except tests/api/ - domain models, the evaluator
+      # frameworks (deterministic/RAGAS/DeepEval/OpenAI-Evals, all mocked -
+      # see each framework's own test suite for why no network call ever
+      # happens here), the Policy Engine, repositories, RAG pipeline,
+      # observability. tests/api/ (real HTTP request/response through
+      # TestClient) is its own job below, matching Sprint 11's explicit
+      # "backend unit tests" + "API/integration tests" split.
+      - name: Run unit tests with coverage
+        working-directory: backend
+        run: |
+          uv run pytest -q tests --ignore=tests/api \
+            --cov=app --cov-report=term-missing --cov-report=xml:coverage-unit.xml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend-unit
+          path: backend/coverage-unit.xml
+          retention-days: 14
+
+  # --- 3. API / integration tests ---
+  backend-api-tests:
+    name: Backend API/integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      - name: Sync dependencies
+        working-directory: backend
+        run: uv sync
+
+      # tests/api/ drives the app exclusively through FastAPI's TestClient
+      # (a real ASGI request/response cycle, all routers/middleware/
+      # dependency-injection included) - distinct coverage from the unit
+      # tests above, which import app internals directly.
+      - name: Run API tests with coverage
+        working-directory: backend
+        run: |
+          uv run pytest -q tests/api \
+            --cov=app --cov-report=term-missing --cov-report=xml:coverage-api.xml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend-api
+          path: backend/coverage-api.xml
+          retention-days: 14
+
+  # --- 4. frontend tests ---
+  frontend-tests:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run tests with coverage
+        working-directory: frontend
+        run: npm run test:coverage
+
+      - name: Build (type-check + production bundle)
+        working-directory: frontend
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend
+          path: frontend/coverage/lcov.info
+          retention-days: 14
+
+  # --- 5. deterministic Quality Gate smoke suite ---
+  smoke-suite:
+    name: Deterministic smoke suite
+    runs-on: ubuntu-latest
+    needs: [backend-unit-tests, backend-api-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      - name: Sync dependencies
+        working-directory: backend
+        run: uv sync
+
+      # Deterministic provider only - no AQG_OPENAI_API_KEY/AQG_GEMINI_API_KEY
+      # anywhere in this job, so it needs no repository secret and costs
+      # nothing to run on every PR (Sprint 11 requirement: "Do NOT require
+      # paid model APIs for every PR" / "Use DeterministicProvider in
+      # standard CI").
+      - name: Start the API
+        working-directory: backend
+        run: |
+          uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          echo $! > /tmp/uvicorn.pid
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:8000/health && exit 0
+            sleep 1
+          done
+          echo "server did not become healthy in time" >&2
+          exit 1
+
+      - name: Run smoke suite against the real running API
+        run: bash scripts/smoke_test.sh http://127.0.0.1:8000
+
+      - name: Stop the API
+        if: always()
+        run: kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true
+
+  # --- 6. Docker build validation ---
+  docker-build:
+    name: Docker build validation
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t ai-quality-gate-backend:ci ./backend
+
+      - name: Build frontend image
+        run: docker build -t ai-quality-gate-frontend:ci ./frontend
+
+      # Beyond "does it build": start the actual backend image and run
+      # the same deterministic smoke suite against it, so this job also
+      # catches problems that only show up in the built image (missing
+      # files from a bad COPY, wrong CMD/ENTRYPOINT, permission issues
+      # under the non-root user, etc.) rather than only in `uv run`.
+      - name: Start backend container
+        run: |
+          docker run -d --name backend-ci -p 8000:8000 ai-quality-gate-backend:ci
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:8000/health && exit 0
+            sleep 1
+          done
+          echo "container did not become healthy in time" >&2
+          docker logs backend-ci
+          exit 1
+
+      - name: Run smoke suite against the backend container
+        run: bash scripts/smoke_test.sh http://127.0.0.1:8000
+
+      - name: Confirm the frontend container serves its static assets
+        run: |
+          docker run -d --name frontend-ci -p 5173:8080 \
+            -e API_BASE_URL=http://127.0.0.1:8000/api/v1 \
+            ai-quality-gate-frontend:ci
+          for i in $(seq 1 20); do
+            curl -s -o /dev/null http://127.0.0.1:5173/ && exit 0
+            sleep 1
+          done
+          echo "frontend container did not become healthy in time" >&2
+          docker logs frontend-ci
+          exit 1
+
+      - name: Confirm env-config.js reflects the injected API_BASE_URL
+        run: |
+          curl -s http://127.0.0.1:5173/env-config.js | grep -q "127.0.0.1:8000" \
+            || (echo "env-config.js did not contain the injected API_BASE_URL" >&2; exit 1)
+
+      - name: Tear down containers
+        if: always()
+        run: |
+          docker rm -f backend-ci frontend-ci 2>/dev/null || true
+
+  # --- 7. coverage ---
+  coverage:
+    name: Coverage summary
+    runs-on: ubuntu-latest
+    needs: [backend-unit-tests, backend-api-tests, frontend-tests]
+    if: always()
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage-artifacts
+          merge-multiple: false
+
+      - name: Summarize coverage
+        run: |
+          echo "## Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Raw reports uploaded as workflow artifacts (kept 14 days):" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          find coverage-artifacts -type f | while read -r f; do
+            echo "- \`$f\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Backend coverage was ~98% and frontend ~90% at the time this workflow was authored (Sprint 11) - no hard threshold is enforced yet; see PROJECT_STATE.md's Sprint 11 section for why." >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,60 @@
+# Local/self-hosted orchestration for the backend + dashboard. Not used by
+# CI (the "Docker build validation" GitHub Actions job builds each image
+# directly with `docker build`, since CI only needs to confirm the images
+# build — it doesn't need them wired together and running).
+#
+# No secrets are baked into either image (see backend/Dockerfile and
+# frontend/Dockerfile's own docstrings) — `env_file: .env` below is the
+# only way credentials reach the backend container, read at container
+# *start*, never at build time. Copy .env.example to .env first; every
+# variable in it is optional.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # The dashboard talks to the backend from the browser (not
+      # container-to-container), so CORS must allow the origin the
+      # browser will actually load the dashboard from. Overridable via
+      # .env if you're running the frontend on a different port/host.
+      AQG_CORS_ORIGINS: ${AQG_CORS_ORIGINS:-http://localhost:5173}
+      # Real persistence across container restarts (the app's own default
+      # is ":memory:" - see PROJECT_STATE.md) - backed by the named
+      # volume below.
+      AQG_POLICY_DB_PATH: ${AQG_POLICY_DB_PATH:-data/quality_gate.db}
+    volumes:
+      - policy-data:/app/data
+      - chroma-data:/app/chroma_store
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:8080"
+    environment:
+      # Browser-facing URL — this is what a client's *browser* fetches
+      # from, so it must be reachable from wherever you open the
+      # dashboard, not just from inside the compose network.
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  policy-data:
+  chroma-data:

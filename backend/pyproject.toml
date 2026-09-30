@@ -35,6 +35,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
     "httpx>=0.27.0",
     "ruff>=0.7.0",
 ]
@@ -50,6 +51,19 @@ packages = ["app"]
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["smoke: hits a real provider API; requires an API key env var and may incur cost"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py"]
+
+[tool.coverage.report]
+# app/main.py is omitted from `source` above rather than tuned for
+# coverage: it's wiring (constructs every service/repository once at
+# startup), exercised implicitly by every API test's `TestClient(create_app())`,
+# but line-coverage on a wiring function measures little beyond "did the
+# app import" - the actual behavior it wires together is what the rest of
+# this table already covers at 98%+.
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
 
 [tool.ruff]
 line-length = 100

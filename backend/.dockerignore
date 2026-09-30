@@ -1,0 +1,20 @@
+# Never let a build context accidentally include real secrets or local state.
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.deepeval/
+*.egg-info/
+
+# Runtime data (rebuilt/regenerated inside the container, not baked in)
+chroma_store/
+data/
+*.db
+*.sqlite3
+
+tests/
