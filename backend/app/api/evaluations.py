@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.api._view import metrics_by_framework
 from app.api.deps import get_evaluation_service
+from app.core.auth import require_write_access
 from app.domain.case_result import CaseResult
 from app.domain.evaluation_run import EvaluationRun
 from app.services.evaluation_service import EvaluationService
@@ -52,7 +53,7 @@ def _run_summary(
     return body
 
 
-@router.post("/runs")
+@router.post("/runs", dependencies=[Depends(require_write_access)])
 def run_evaluation(
     request: RunEvaluationRequest,
     evaluation_service: Annotated[EvaluationService, Depends(get_evaluation_service)],

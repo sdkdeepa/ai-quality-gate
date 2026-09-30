@@ -56,6 +56,39 @@ jobs:
         working-directory: frontend
         run: npx tsc -b
 
+  # --- dependency/security scanning (Sprint 12) ---
+  # Neither tool needs a real provider API key or any repository secret -
+  # both scan already-resolved dependency manifests (uv.lock,
+  # package-lock.json) against public vulnerability databases. Blocking
+  # (not informational): both currently pass clean, so a newly-introduced
+  # vulnerable dependency should fail the PR, not just get logged.
+  security-scan:
+    name: Dependency security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      - name: Backend - pip-audit
+        working-directory: backend
+        run: uv tool run pip-audit --strict
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend - npm audit
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --audit-level=high
+
   # --- 2. backend unit tests ---
   backend-unit-tests:
     name: Backend unit tests

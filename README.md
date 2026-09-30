@@ -12,7 +12,7 @@ itself are owned by the Quality Gate, not by any framework.
 
 ## Status
 
-**Sprint 11 — Docker and GitHub Actions CI/CD: complete.**
+**Sprint 12 — Security, Reliability, and Operational Hardening: complete.**
 
 The service loads versioned golden datasets from disk and grades
 system-under-test responses with 8 deterministic evaluators (exact/
@@ -59,6 +59,21 @@ against real API keys, gated by repository secrets and failing the job on
 a BLOCK decision. See `docs/ci-cd.md` for the deterministic-vs-live
 breakdown, secrets setup, and cost controls, and `PROJECT_STATE.md` for
 full capability detail and outstanding work.
+
+On top of all of that, the service is hardened for security, reliability,
+and operations: request bodies over a configurable size are rejected
+before a handler ever reads them; logs are structured JSON with secrets
+(API keys, bearer tokens, password/api_key-style fields) redacted
+automatically; a basic RBAC boundary (`AQG_API_KEY`, off by default) gates
+every mutating endpoint while every GET stays open; live provider calls
+retry transient failures (timeout/rate-limit/unavailable) with bounded,
+exponential backoff; every evaluator runs under a wall-clock timeout and
+is isolated so one hung or crashing evaluator — or even a crashing case —
+never takes down the rest of a run, with the result explicitly marked
+`partial` rather than silently incomplete; a `GET /ready` endpoint
+reports real dependency health distinct from `GET /health`'s liveness
+check; and `pip-audit`/`npm audit` run as blocking checks on every PR. See
+`PROJECT_STATE.md`'s Sprint 12 section for the full list.
 
 See [`PROJECT_STATE.md`](PROJECT_STATE.md) for current architecture,
 completed capabilities, outstanding work, and exact run commands, and

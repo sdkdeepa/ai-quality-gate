@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.api._view import metrics_by_framework
 from app.api.deps import get_rag_service
+from app.core.auth import require_write_access
 from app.rag.types import RAGAnswer
 from app.services.rag_service import RAGService
 
@@ -30,7 +31,7 @@ class EvaluateRAGCaseRequest(BaseModel):
     frameworks: list[Literal["deterministic", "ragas", "deepeval", "openai_evals"]] | None = None
 
 
-@router.post("/query")
+@router.post("/query", dependencies=[Depends(require_write_access)])
 def query_rag(
     request: RAGQueryRequest,
     rag_service: Annotated[RAGService, Depends(get_rag_service)],
@@ -63,7 +64,7 @@ def inspect_chunks(
     return {"query": query, "chunk_count": len(chunks), "chunks": chunks}
 
 
-@router.post("/evaluate/{case_id}")
+@router.post("/evaluate/{case_id}", dependencies=[Depends(require_write_access)])
 def evaluate_rag_case(
     case_id: str,
     request: EvaluateRAGCaseRequest,

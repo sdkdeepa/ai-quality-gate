@@ -79,13 +79,24 @@ class TestDatasetServiceLoadAll:
 
         assert len(service.list_datasets()) == 1
 
-    def test_raises_on_malformed_dataset_file(self, tmp_path):
+    def test_skips_malformed_dataset_file_and_loads_the_rest(self, tmp_path, caplog):
+        """Sprint 12: one malformed file is logged and skipped, never
+        fatal to the whole app — see DatasetService.load_all()'s
+        docstring. Superseded `test_raises_on_malformed_dataset_file`,
+        which asserted the old (crash-the-app) behavior this sprint
+        deliberately replaced."""
+        import logging
+
+        _write(tmp_path, "sample.v1.0.0.json", VALID_DATASET)
         (tmp_path / "broken.json").write_text("{not valid json")
         service = _service(tmp_path)
 
-        with pytest.raises(DatasetValidationError) as exc_info:
-            service.load_all()
-        assert "broken.json" in str(exc_info.value)
+        with caplog.at_level(logging.ERROR, logger="app.dataset"):
+            service.load_all()  # must not raise
+
+        assert len(service.list_datasets()) == 1
+        assert service.list_datasets()[0].id == "sample@1.0.0"
+        assert any("broken.json" in record.message for record in caplog.records)
 
     def test_missing_directory_loads_nothing(self, tmp_path):
         service = _service(tmp_path / "does-not-exist")

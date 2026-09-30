@@ -103,6 +103,47 @@ class Settings(BaseSettings):
     phoenix_collector_endpoint: str = "http://localhost:6006/v1/traces"
     phoenix_project_name: str = "ai-quality-gate"
 
+    # Sprint 12 — Security, Reliability, and Operational Hardening.
+    #
+    # Security: request body size cap, enforced by MaxBodySizeMiddleware
+    # before a handler ever reads the body — a request declaring (or
+    # sending) more than this via Content-Length gets a 413, not a
+    # handler that tries to buffer an arbitrarily large payload into
+    # memory. 2MB comfortably covers the largest legitimate request body
+    # today (a golden dataset case list via the RAG/evaluation endpoints
+    # is tiny by comparison; this exists for cases nobody's written yet).
+    max_request_body_bytes: int = 2 * 1024 * 1024
+
+    # Security: a single shared-secret API key gating *mutating* endpoints
+    # only (POST/PUT/DELETE) — every GET stays open. None (the default)
+    # means auth is off entirely, same "opt-in, unconfigured install is
+    # unaffected" rationale as every other Settings flag in this file.
+    # This is deliberately not full RBAC — see DECISIONS.md's Sprint 12
+    # entry for why a single shared key was judged sufficient as the
+    # "basic RBAC boundary or documented auth abstraction" this sprint
+    # asked for, and `app/core/auth.py` for the abstraction a real
+    # per-user/per-role system would replace this behind.
+    api_key: str | None = None
+
+    # Reliability: how many total attempts (including the first) a live
+    # provider call gets before its last failure is accepted as final.
+    # Only TIMEOUT/RATE_LIMIT/UNAVAILABLE are retried — see
+    # `app/reliability/retry.py`; AUTHENTICATION/MALFORMED_RESPONSE never
+    # are, since retrying either wastes time on a failure retrying cannot
+    # fix. 1 means "no retries" (matches Sprint 1-11 behavior exactly).
+    provider_retry_max_attempts: int = 3
+    provider_retry_base_delay_seconds: float = 0.5
+
+    # Reliability: a wall-clock ceiling on one Evaluator.evaluate() call,
+    # independent of and in addition to any timeout a framework's own
+    # judge-model HTTP client enforces (AQG_PROVIDER_TIMEOUT_SECONDS for
+    # RAGAS/DeepEval/OpenAI-Evals' judges) — this catches an evaluator
+    # that hangs for a *non-network* reason (a library bug, a pathological
+    # input) that a client-side HTTP timeout would never see. Enforced by
+    # running the call in a worker thread and giving up if it doesn't
+    # return in time — see `app/evaluation/runner.py`.
+    evaluator_timeout_seconds: float = 60.0
+
 
 @lru_cache
 def get_settings() -> Settings:
