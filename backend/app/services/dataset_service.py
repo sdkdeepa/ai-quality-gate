@@ -42,6 +42,14 @@ class DatasetService:
         self._repository = repository
 
     def load_all(self) -> None:
+        """Loads every `*.json` dataset file in `dataset_dir`. Sprint 12:
+        one malformed file is logged and skipped, not fatal to the whole
+        app — previously, a single bad dataset file raised straight out
+        of this method, which `create_app()` calls unguarded at startup,
+        meaning one corrupted file took down the entire process rather
+        than just that one dataset being unavailable. Every other valid
+        file still loads normally.
+        """
         if not self._dataset_dir.is_dir():
             logger.warning(
                 "dataset directory %s does not exist; no datasets loaded", self._dataset_dir
@@ -50,7 +58,16 @@ class DatasetService:
         for path in sorted(self._dataset_dir.glob("*.json")):
             if path.name.endswith(".fixtures.json"):
                 continue
-            dataset = parse_dataset(path.read_text(), source=path.name)
+            try:
+                dataset = parse_dataset(path.read_text(), source=path.name)
+            except DatasetValidationError as exc:
+                logger.error(
+                    "skipping malformed dataset file %s: %s",
+                    path.name,
+                    exc.message,
+                    extra={"dataset_file": path.name},
+                )
+                continue
             self._repository.add(dataset)
             logger.info("loaded dataset %s", dataset.id)
 

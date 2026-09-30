@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_policy_service
+from app.core.auth import require_write_access
 from app.domain.release_policy import ReleasePolicy, RequiredMetricPolicy
 from app.services.policy_service import PolicyService
 
@@ -37,7 +38,7 @@ class CreatePolicyRequest(BaseModel):
     cost_budget_action: Literal["block", "warn"] = "warn"
 
 
-@router.post("/decisions")
+@router.post("/decisions", dependencies=[Depends(require_write_access)])
 def run_gate(
     request: RunGateRequest,
     policy_service: Annotated[PolicyService, Depends(get_policy_service)],
@@ -71,7 +72,7 @@ def list_decisions(
     return policy_service.list_history(limit)
 
 
-@router.post("/baselines")
+@router.post("/baselines", dependencies=[Depends(require_write_access)])
 def approve_baseline(
     request: ApproveBaselineRequest,
     policy_service: Annotated[PolicyService, Depends(get_policy_service)],
@@ -103,7 +104,7 @@ def compare_runs(
     return policy_service.compare_runs(run_id_a, run_id_b)
 
 
-@router.post("/policies")
+@router.post("/policies", dependencies=[Depends(require_write_access)])
 def create_policy(
     request: CreatePolicyRequest,
     policy_service: Annotated[PolicyService, Depends(get_policy_service)],

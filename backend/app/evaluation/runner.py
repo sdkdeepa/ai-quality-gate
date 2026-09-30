@@ -1,3 +1,6 @@
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
 
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
@@ -10,13 +13,17 @@ from app.domain.enums import RunStatus
 from app.domain.evaluation_case import EvaluationCase
 from app.domain.evaluation_run import EvaluationRun
 from app.domain.golden_dataset import GoldenDataset
+from app.domain.metric_result import MetricResult
 from app.evaluation.base import Evaluator
 from app.evaluation.deterministic import DEFAULT_EVALUATORS
 from app.evaluation.types import EvaluationInput, FixtureResponse
 from app.observability.tracing import trace_id_hex
 from app.providers.base import Provider
 from app.providers.deterministic import DeterministicProvider
-from app.providers.types import ProviderRequest
+from app.providers.types import ProviderErrorType, ProviderRequest
+from app.reliability.retry import retry_provider_call
+
+logger = logging.getLogger("app.evaluation")
 
 
 class EvaluationRunner:
@@ -30,7 +37,13 @@ class EvaluationRunner:
     """
 
     def __init__(
-        self, evaluators: list[Evaluator] | None = None, *, tracer: Tracer | None = None
+        self,
+        evaluators: list[Evaluator] | None = None,
+        *,
+        tracer: Tracer | None = None,
+        provider_retry_max_attempts: int = 1,
+        provider_retry_base_delay_seconds: float = 0.5,
+        evaluator_timeout_seconds: float | None = None,
     ) -> None:
         self._evaluators = evaluators if evaluators is not None else list(DEFAULT_EVALUATORS)
         # Sprint 9: defaults to OpenTelemetry's own no-op tracer, so every
@@ -38,6 +51,13 @@ class EvaluationRunner:
         # an EvaluationRunner without a `tracer` keeps working exactly as
         # before — see `app/observability/tracing.py`.
         self._tracer = tracer or trace.get_tracer(__name__)
+        # Sprint 12: both default to "off" (1 attempt = no retries, no
+        # per-evaluator timeout) so every existing caller/test that builds
+        # an EvaluationRunner without these keyword arguments keeps
+        # working exactly as before.
+        self._provider_retry_max_attempts = provider_retry_max_attempts
+        self._provider_retry_base_delay_seconds = provider_retry_base_delay_seconds
+        self._evaluator_timeout_seconds = evaluator_timeout_seconds
 
     def run(
         self,
@@ -90,13 +110,66 @@ class EvaluationRunner:
             )
 
             case_results = [
-                self.evaluate_case(case, provider, frameworks=frameworks) for case in dataset.cases
+                self._evaluate_case_isolated(case, provider, frameworks=frameworks)
+                for case in dataset.cases
             ]
 
-            run.status = RunStatus.COMPLETED
+            run.status = (
+                RunStatus.PARTIAL if any(c.partial for c in case_results) else RunStatus.COMPLETED
+            )
             run.completed_at = datetime.now(UTC)
+            logger.info(
+                "evaluation run completed",
+                extra={
+                    "run_id": run.id,
+                    "trace_id": run.trace_id,
+                    "dataset_name": run.dataset_name,
+                    "dataset_version": run.dataset_version,
+                    "provider": run.provider,
+                    "model": run.model,
+                    "run_status": run.status.value,
+                    "case_count": len(case_results),
+                    "passed_count": sum(1 for c in case_results if c.passed),
+                    "partial_count": sum(1 for c in case_results if c.partial),
+                },
+            )
 
             return run, case_results
+
+    def _evaluate_case_isolated(
+        self, case: EvaluationCase, provider: Provider, *, frameworks: set[str] | None
+    ) -> CaseResult:
+        """Sprint 12: the outermost failure-isolation boundary — one
+        case's totally unexpected crash (anything not already caught and
+        normalized by `evaluate_case`'s own provider/evaluator handling)
+        must never lose every other case's already-computed results. This
+        is deliberately a second, independent safety net on top of
+        `_evaluate_with_span`'s per-evaluator isolation, not a replacement
+        for it: that one keeps one bad evaluator from ruining one case;
+        this one keeps one bad case from ruining the whole run.
+        """
+        try:
+            return self.evaluate_case(case, provider, frameworks=frameworks)
+        except Exception as exc:  # noqa: BLE001 - isolate one case's bug from the whole run
+            logger.error(
+                "case %s raised an unexpected exception during evaluation - isolated, "
+                "other cases in this run still ran",
+                case.id,
+                exc_info=True,
+                extra={"case_id": case.id},
+            )
+            return CaseResult(
+                case_id=case.id,
+                response="",
+                latency_ms=0.0,
+                input_tokens=0,
+                output_tokens=0,
+                estimated_cost=0.0,
+                passed=False,
+                critical_failure=case.critical,
+                partial=True,
+                error={"error_type": ProviderErrorType.UNAVAILABLE.value, "message": str(exc)},
+            )
 
     def evaluate_case(
         self, case: EvaluationCase, provider: Provider, *, frameworks: set[str] | None = None
@@ -154,6 +227,8 @@ class EvaluationRunner:
 
             case_span.set_attribute(SpanAttributes.OUTPUT_VALUE, response.text)
             case_span.set_attribute("case.passed", passed)
+            partial = any("error_type" in m.metadata for m in metric_results)
+            case_span.set_attribute("case.partial", partial)
 
             return CaseResult(
                 case_id=case.id,
@@ -166,6 +241,7 @@ class EvaluationRunner:
                 metric_results=metric_results,
                 passed=passed,
                 critical_failure=case.critical and not passed,
+                partial=partial,
                 error=(
                     {
                         "error_type": response.error.error_type.value,
@@ -185,6 +261,13 @@ class EvaluationRunner:
         giving retrieval and generation distinct, separately-visible spans
         (requirement: "retrieval and generation visible separately")
         without this method needing to know RAG exists at all.
+
+        Sprint 12: retried (bounded, exponential backoff) via
+        `retry_provider_call` when `AQG_PROVIDER_RETRY_MAX_ATTEMPTS > 1`
+        and the failure is one `ProviderError.retryable` calls transient
+        (TIMEOUT/RATE_LIMIT/UNAVAILABLE) — a bad key or a malformed
+        response is returned on the first attempt with no retry, since
+        retrying either wastes time on a failure retrying cannot fix.
         """
         with self._tracer.start_as_current_span(
             "provider_call",
@@ -195,7 +278,11 @@ class EvaluationRunner:
                 SpanAttributes.INPUT_VALUE: request.prompt,
             },
         ) as span:
-            response = provider.generate(request)
+            response = retry_provider_call(
+                lambda: provider.generate(request),
+                max_attempts=self._provider_retry_max_attempts,
+                base_delay_seconds=self._provider_retry_base_delay_seconds,
+            )
             span.set_attribute(SpanAttributes.OUTPUT_VALUE, response.text)
             span.set_attribute("llm.latency_ms", response.latency_ms)
             if response.input_tokens is not None:
@@ -216,7 +303,25 @@ class EvaluationRunner:
         execution"). Every framework — deterministic, RAGAS, DeepEval, the
         OpenAI-Evals-concept adapters — is instrumented identically here,
         at the one place they're all invoked; none of them (nor
-        `app/policy/`) has any idea this span exists."""
+        `app/policy/`) has any idea this span exists.
+
+        Sprint 12 requirement: "evaluator timeouts", "failure isolation
+        between frameworks", "graceful degradation", "explicit partial-
+        evaluation semantics". If this evaluator times out
+        (`AQG_EVALUATOR_TIMEOUT_SECONDS`) or raises ANY unexpected
+        exception (a bug in that one evaluator/framework — not the
+        normalized infrastructure failures RAGAS/DeepEval/OpenAI-Evals
+        clients already handle internally, which still return a normal
+        MetricResult), this is caught here and converted into an explicit
+        MetricResult carrying `metadata["error_type"]` — the exact same
+        convention Sprint 5/6/7's framework adapters use for their own
+        infrastructure failures — rather than letting it propagate and
+        take down the entire case (and, before this sprint, the entire
+        run: `evaluate_case`'s list comprehension had no per-evaluator
+        isolation at all). `app/policy/engine.py`'s existing
+        `_metric_status()` classifies this as `infrastructure_error`
+        automatically, with no changes needed there.
+        """
         with self._tracer.start_as_current_span(
             evaluator.name,
             attributes={
@@ -225,9 +330,90 @@ class EvaluationRunner:
                 "evaluator.framework": evaluator.framework,
             },
         ) as span:
-            result = evaluator.evaluate(evaluation_input)
+            try:
+                result = self._call_evaluator(evaluator, evaluation_input)
+            except FutureTimeoutError:
+                logger.error(
+                    "evaluator %s timed out after %ss - isolated, other evaluators for "
+                    "this case still ran",
+                    evaluator.name,
+                    self._evaluator_timeout_seconds,
+                    extra={
+                        "evaluator_name": evaluator.name,
+                        "evaluator_framework": evaluator.framework,
+                        "timeout_seconds": self._evaluator_timeout_seconds,
+                    },
+                )
+                span.set_attribute("evaluator.status", "timeout")
+                result = _isolated_failure_result(
+                    evaluator,
+                    ProviderErrorType.TIMEOUT,
+                    f"evaluator did not return within {self._evaluator_timeout_seconds}s",
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate one evaluator's bug from the case/run
+                logger.error(
+                    "evaluator %s raised an unexpected exception - isolated, other "
+                    "evaluators for this case still ran",
+                    evaluator.name,
+                    exc_info=True,
+                    extra={
+                        "evaluator_name": evaluator.name,
+                        "evaluator_framework": evaluator.framework,
+                    },
+                )
+                span.set_attribute("evaluator.status", "crashed")
+                result = _isolated_failure_result(
+                    evaluator, ProviderErrorType.UNAVAILABLE, str(exc)
+                )
+
             span.set_attribute("evaluator.metric_name", result.metric_name)
             span.set_attribute(SpanAttributes.EVALUATIONS, str(result.score))
             span.set_attribute("evaluator.score", result.score)
             span.set_attribute("evaluator.passed", result.passed)
             return result
+
+    def _call_evaluator(self, evaluator: Evaluator, evaluation_input: EvaluationInput):
+        if self._evaluator_timeout_seconds is None:
+            return evaluator.evaluate(evaluation_input)
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(evaluator.evaluate, evaluation_input)
+        try:
+            return future.result(timeout=self._evaluator_timeout_seconds)
+        finally:
+            # wait=False: a genuine timeout must never itself hang waiting
+            # for the (possibly still-running-forever) worker thread to
+            # finish. Python has no cross-platform way to forcibly kill a
+            # thread, so a timed-out call's thread is abandoned, not
+            # killed — it will run to completion in the background with
+            # its result discarded. See DECISIONS.md's Sprint 12 entry.
+            pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _isolated_failure_result(
+    evaluator: Evaluator, error_type: ProviderErrorType, detail: str
+) -> MetricResult:
+    """Builds the explicit, non-vacuous MetricResult a timed-out or
+    crashed evaluator is replaced with (Sprint 12). Uses the exact same
+    `metadata["error_type"]` convention Sprint 5/6/7's own framework
+    adapters use for THEIR infrastructure failures — so
+    `app/policy/engine.py`'s existing `_metric_status()` classifies this
+    as `infrastructure_error` (never a quality score of 0) with no
+    changes needed there, and a required-metric policy's
+    `on_infrastructure_failure` action (block/warn/ignore) applies to a
+    runner-level isolation failure exactly the same way it already
+    applies to a RAGAS/DeepEval/OpenAI-Evals judge's own infra failure.
+    """
+    return MetricResult(
+        metric_name=evaluator.name,
+        score=0.0,
+        threshold=1.0,
+        passed=False,
+        framework=evaluator.framework,
+        explanation=(
+            f"evaluator infrastructure failure ({error_type.value}): {detail}. "
+            "This is not a quality score - the evaluator did not execute "
+            "(isolated so other evaluators for this case still ran)."
+        ),
+        metadata={"error_type": error_type.value},
+    )

@@ -22,7 +22,24 @@ class ProviderError(BaseModel):
 
     error_type: ProviderErrorType
     message: str
-    retryable: bool = False
+
+    @property
+    def retryable(self) -> bool:
+        """Whether a retry might succeed where this attempt didn't (Sprint 12:
+        `app/reliability/retry.py` reads this to decide whether to retry a
+        provider call). A computed property, not a stored field set at each
+        of the four `ProviderError(...)` construction sites (deterministic/
+        OpenAI/Gemini providers, RAGProvider): TIMEOUT/RATE_LIMIT/UNAVAILABLE
+        are transient by nature and worth a second attempt; AUTHENTICATION
+        (a bad key won't become a good one) and MALFORMED_RESPONSE (a
+        response that didn't parse won't parse differently on retry) are
+        not — no call site can forget to set this correctly, because
+        there's nothing to set."""
+        return self.error_type in {
+            ProviderErrorType.TIMEOUT,
+            ProviderErrorType.RATE_LIMIT,
+            ProviderErrorType.UNAVAILABLE,
+        }
 
 
 class ProviderRequest(BaseModel):

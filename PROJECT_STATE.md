@@ -1,6 +1,6 @@
 # PROJECT_STATE
 
-Last updated: 2026-09-21 (Sprint 11 complete)
+Last updated: 2026-09-30 (Sprint 12 complete)
 
 ## Current architecture
 
@@ -99,28 +99,42 @@ ai-quality-gate/
         │   └── sqlite.py           # SQLiteRepository[T] + Policy/Baseline/GateDecisionRepository (Sprint 8)
         ├── services/           # application/orchestration layer
         │   ├── status_service.py     # assembles /api/v1/status payload
-        │   ├── dataset_service.py    # load/validate/list/get datasets + fixtures from disk
+        │   ├── dataset_service.py    # load/validate/list/get datasets + fixtures from disk;
+        │   │                         # Sprint 12: load_all() skips a malformed file, never crashes startup
         │   ├── evaluation_service.py # orchestrates dataset -> provider factory -> runner -> repositories;
         │   │                         # list_runs() added Sprint 10 for the dashboard's Evaluation Runs view
         │   ├── rag_service.py        # orchestrates RAG query / chunk inspection / evaluate-a-case
-        │   ├── policy_service.py     # Sprint 8: decide/approve-baseline/compare-runs/policy registration
+        │   ├── policy_service.py     # Sprint 8: decide/approve-baseline/compare-runs/policy registration;
+        │   │                         # Sprint 12: decide() logs a structured "gate decision recorded" line
         │   └── report_service.py     # Sprint 10: composes PolicyService's decision+run+cases into a Report
+        ├── reliability/         # Sprint 12 — bounded retries, isolated from evaluation/provider logic
+        │   └── retry.py             # retry_provider_call(): bounded, exponential-backoff retry keyed on
+        │   │                         # ProviderError.retryable (TIMEOUT/RATE_LIMIT/UNAVAILABLE only)
         ├── api/                 # HTTP layer (FastAPI routers)
         │   ├── deps.py              # FastAPI dependency providers
         │   ├── _view.py             # metrics_by_framework(): groups a CaseResult's MetricResults by framework
-        │   ├── health.py            # GET /health
+        │   ├── health.py            # GET /health (liveness); GET /ready (Sprint 12: dataset/policy-store/
+        │   │                         # rag-vector-store reachability, 503 with specifics if any fails)
         │   ├── status.py            # GET /api/v1/status
         │   ├── datasets.py          # GET /api/v1/datasets, GET /api/v1/datasets/{name}/{version}
-        │   ├── evaluations.py       # POST /api/v1/evaluations/runs, GET /api/v1/evaluations/runs (Sprint 10),
-        │   │                         # GET /api/v1/evaluations/runs/{id}
-        │   ├── rag.py                # POST /rag/query, GET /rag/chunks, POST /rag/evaluate/{case_id}
-        │   ├── gate.py                # Sprint 8: /gate/decisions, /gate/baselines, /gate/compare, /gate/policies
+        │   ├── evaluations.py       # POST /api/v1/evaluations/runs (Sprint 12: auth-gated), GET .../runs
+        │   │                         # (Sprint 10), GET /api/v1/evaluations/runs/{id}
+        │   ├── rag.py                # POST /rag/query, /rag/evaluate/{case_id} (Sprint 12: auth-gated),
+        │   │                         # GET /rag/chunks
+        │   ├── gate.py                # Sprint 8: /gate/decisions, /baselines, /policies (Sprint 12: all
+        │   │                         # three POSTs auth-gated), GET /gate/compare
         │   └── reports.py             # Sprint 10: GET /reports/{decision_id}/json, GET /reports/{decision_id}/html
         └── core/                 # cross-cutting concerns
-            ├── config.py            # Settings (env-var driven, AQG_ prefix; dataset_dir + provider config)
+            ├── config.py            # Settings (env-var driven, AQG_ prefix; dataset_dir + provider config;
+            │                         # Sprint 12: max_request_body_bytes, api_key, provider_retry_*,
+            │                         # evaluator_timeout_seconds)
             ├── context.py           # request-id ContextVar
-            ├── logging.py           # JSON log formatter, configure_logging()
-            ├── middleware.py        # RequestIDMiddleware (trace ID + timing)
+            ├── logging.py           # JSON log formatter, configure_logging(); Sprint 12: now actually
+            │                         # includes `extra=` fields (see DECISIONS.md #35) and redacts secrets
+            ├── redaction.py         # Sprint 12: redact() — pattern-based credential scrubber for log output
+            ├── auth.py              # Sprint 12: AuthBackend protocol + ApiKeyAuthBackend + require_write_access
+            │                         # (basic RBAC boundary — read vs. write, not per-user roles)
+            ├── middleware.py        # RequestIDMiddleware (trace ID + timing); Sprint 12: MaxBodySizeMiddleware
             └── exceptions.py        # AppError family + exception handlers (incl. ProviderConfigurationError)
 ```
 
@@ -276,6 +290,22 @@ The one workflow that *does* touch real evaluation data,
 scripted *caller* of the API, not a different code path through it. See
 [[Sprint 11 decision 33]] and [[Sprint 11 decision 34]].
 
+**Isolation failures are still evaluation results, never a second way to
+decide PASS/WARN/BLOCK (Sprint 12):** when an evaluator times out or
+crashes unexpectedly, `EvaluationRunner` converts that into an ordinary
+`MetricResult` carrying `metadata["error_type"]` — the exact same
+convention Sprint 5/6/7's RAGAS/DeepEval/OpenAI-Evals clients already use
+for their own infrastructure failures. `app/policy/engine.py`'s
+`_metric_status()` classifies it as `infrastructure_error` with no
+changes needed there at all: Sprint 12 generalizes an existing pattern
+rather than adding a parallel one. The same is true of the basic RBAC
+boundary (`app/core/auth.py`) and the request-size limit
+(`MaxBodySizeMiddleware`) — both live entirely in the HTTP/middleware
+layer, before a request ever reaches a service or the Policy Engine; a
+rejected request never becomes a `CaseResult` or a `GateDecision` at all,
+it simply never happened from the domain's point of view. See
+[[Sprint 12 decision 35]] through [[Sprint 12 decision 38]].
+
 **Provider boundary (Sprint 3):** `app/providers/base.py` defines the
 `Provider` protocol — `name`, `model`, `generate(ProviderRequest) ->
 ProviderResponse`. `DeterministicProvider`, `OpenAIProvider`, and
@@ -301,7 +331,7 @@ with the same 8 deterministic evaluators as everything else — no
 RAG-specific evaluator, no RAG-specific branch in the runner. See
 [[Sprint 4 decision 17]] for exactly where LangChain is used vs. our own code.
 
-## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7 + Sprint 8 + Sprint 9 + Sprint 10 + Sprint 11)
+## Completed capabilities (Sprint 1 + Sprint 2 + Sprint 3 + Sprint 4 + Sprint 5 + Sprint 6 + Sprint 7 + Sprint 8 + Sprint 9 + Sprint 10 + Sprint 11 + Sprint 12)
 
 **Sprint 1 — Foundation:**
 - Domain model: `EvaluationCase`, `EvaluationRun`, `MetricResult`,
@@ -1090,9 +1120,149 @@ debugging guide, which was already present.)*
   workflow, enforcing a coverage threshold, a matrix run across multiple
   datasets/providers in one `live-eval.yml` trigger.
 
+**Sprint 12 — Security, Reliability, and Operational Hardening:**
+
+*Two real bugs found during this sprint's own investigation, before any
+new code was written:*
+- `app/core/logging.py`'s `JSONFormatter` built a fixed payload and never
+  read a log record's `extra=` fields at all — meaning
+  `RequestIDMiddleware`'s own `path`/`method`/`status_code`/`duration_ms`
+  had never once appeared in a log line since Sprint 1, despite being
+  passed on every single request. Fixed: every non-standard `LogRecord`
+  attribute (i.e. everything passed via `extra=`) is now included,
+  redacted like every other string value.
+- `ProviderError.retryable` existed as a field (added in an earlier
+  sprint, apparently in anticipation of retry logic that was never built)
+  but was never set to `True` anywhere and never read anywhere. Turned
+  into a computed `@property` derived from `error_type`
+  (TIMEOUT/RATE_LIMIT/UNAVAILABLE are retryable; AUTHENTICATION/
+  MALFORMED_RESPONSE are not) rather than a stored field, so none of the
+  four places that construct a `ProviderError` needed to change, and it
+  can never be set inconsistently.
+
+*Security:*
+- **Request size limits**: `MaxBodySizeMiddleware` (`app/core/middleware.py`)
+  rejects a request with 413 when its declared `Content-Length` exceeds
+  `AQG_MAX_REQUEST_BODY_BYTES` (default 2MB) — checked before any handler
+  reads the body. Known limitation: a client using chunked transfer
+  encoding to omit `Content-Length` could still stream past this check —
+  see [[Sprint 12 decision 36]] for why that gap was accepted this sprint.
+- **Secret-safe logging / redaction**: `app/core/redaction.py`'s
+  `redact()` — pattern-based (OpenAI/Google key shapes, Bearer tokens,
+  `key=value` credential fields) rather than an exhaustive secret-name
+  list, so a new provider's credential shape doesn't require an update
+  here. Applied to every log message, every `extra` field value, and
+  exception tracebacks in `JSONFormatter`. Defense-in-depth, not a
+  substitute for not logging secrets in the first place — nothing in this
+  codebase deliberately logs a credential today.
+- **Dataset/input validation**: already solid since Sprint 2
+  (`DatasetService.parse_dataset` raises a clean `DatasetValidationError`
+  for malformed JSON or schema violations, already tested) — Sprint 12's
+  addition is `load_all()` no longer being fatal to the whole app on one
+  bad file (see "graceful degradation" below).
+- **Safe file handling**: audited, not newly built — `DatasetService`
+  never constructs a filesystem path from live request input (`GET
+  /datasets/{name}/{version}` filters an in-memory list already loaded at
+  startup; `_fixture_path` derives its path from an already-validated
+  `GoldenDataset`'s own `name`/`version` attributes, not fresh per-request
+  strings). No user-controlled path-traversal surface was found reachable
+  via the API today. Recorded here rather than silently skipped so a
+  future reviewer knows this was checked, not overlooked.
+- **Basic RBAC boundary**: `app/core/auth.py` — an `AuthBackend` Protocol
+  plus one concrete `ApiKeyAuthBackend` (a single shared secret,
+  `AQG_API_KEY`, checked via the `X-API-Key` header). `require_write_access`
+  gates all 6 mutating endpoints (`POST /evaluations/runs`, `/gate/decisions`,
+  `/gate/baselines`, `/gate/policies`, `/rag/query`, `/rag/evaluate/{case_id}`);
+  every GET stays open unconditionally. Off entirely when `AQG_API_KEY` is
+  unset, same "opt-in, unconfigured install unaffected" convention as
+  every other flag in `Settings`. Deliberately not full per-user RBAC —
+  see [[Sprint 12 decision 37]] for why this scope was judged sufficient.
+- **Dependency/security scanning**: `pip-audit --strict` (backend) and
+  `npm audit --audit-level=high` (frontend) added as a new, blocking
+  `security-scan` job in `.github/workflows/pr.yml` — both confirmed
+  clean against current dependencies before being wired in as blocking.
+
+*Reliability:*
+- **Provider timeouts**: already correctly wired since Sprint 3
+  (`AQG_PROVIDER_TIMEOUT_SECONDS` passed to both the OpenAI and Gemini
+  SDK clients), already tested — no change needed.
+- **Bounded retries**: `app/reliability/retry.py`'s `retry_provider_call()`
+  wraps every `Provider.generate()` call in `EvaluationRunner`, retrying
+  only when `ProviderError.retryable` is true, with exponential backoff
+  plus jitter. `AQG_PROVIDER_RETRY_MAX_ATTEMPTS=1` (not the new default —
+  see the env var table) reproduces exact Sprint 1-11 behavior (no
+  retries at all).
+- **Evaluator timeouts**: `EvaluationRunner._call_evaluator()` runs
+  `Evaluator.evaluate()` in a worker thread and gives up after
+  `AQG_EVALUATOR_TIMEOUT_SECONDS` (default 60s) if it hasn't returned —
+  independent of and in addition to any framework's own judge-model HTTP
+  timeout, since this catches a *non-network* hang (a library bug, a
+  pathological input) that a client-side timeout would never see. Known,
+  accepted limitation: Python has no cross-platform way to forcibly kill
+  a thread, so a genuinely hung evaluator's thread is abandoned (not
+  killed) and keeps running in the background with its result discarded
+  — the caller is never blocked waiting for it, which is the property
+  that actually matters. See [[Sprint 12 decision 38]].
+- **Failure isolation between frameworks**: two independent layers, both
+  new this sprint. `_evaluate_with_span` catches a timeout OR any
+  unexpected exception from one evaluator and converts it to an explicit
+  `infrastructure_error` `MetricResult` rather than letting it propagate —
+  one broken/hung evaluator no longer stops every other evaluator (any
+  framework) from running for the same case. `_evaluate_case_isolated`
+  is a second, outer boundary: one case's totally unexpected crash
+  (anything not already normalized by the provider/evaluator layers) no
+  longer loses every other case's already-computed results for the whole
+  run. Manually verified end to end before writing formal tests: a
+  30-second-hang evaluator, a crashing evaluator, and a working evaluator
+  run together, the run completes in ~0.2s (the configured timeout, not
+  30s), and the working evaluator's result is intact.
+- **Explicit partial-evaluation semantics**: `CaseResult.partial: bool`
+  (true whenever any of that case's `metric_results` carries
+  `metadata["error_type"]` — a framework's own infra failure OR this
+  sprint's new isolation, uniformly) and `RunStatus.PARTIAL` (true when
+  any case in the run is partial) — see [[Sprint 12 decision 35]] for why
+  both existing-framework infra failures and new isolation failures share
+  one "partial" signal rather than two different flags.
+- **Health/readiness endpoints**: `GET /ready` (new, alongside the
+  existing `GET /health` liveness check) — runs the cheapest real read
+  against each dependency (dataset list, policy-store list, RAG
+  vector-store chunk count) and returns 503 with which check(s) failed if
+  any do, 200 otherwise. Distinct from `/health`, which checks nothing
+  and can never reflect a broken dependency.
+
+*Operations:*
+- **Structured logs**: the `JSONFormatter` bug fix above is what makes
+  everything below actually work — previously, passing `extra=` to any
+  logger call was silently a no-op.
+- **Run IDs, trace IDs, policy version, dataset version, provider/model
+  version, error categorization**: all already existed as domain fields
+  (`EvaluationRun.id`/`.trace_id`, `GateDecision.policy_version`, etc.)
+  since Sprints 1-9; what Sprint 12 adds is actually *logging* them at the
+  two moments an operator would most want them — `EvaluationRunner.run_with_provider`
+  logs "evaluation run completed" with run_id/trace_id/dataset_name+version/
+  provider/model/run_status/case_count/passed_count/partial_count, and
+  `PolicyService.decide` logs "gate decision recorded" with all of the
+  above plus decision_id/decision_status/policy_id+version/
+  critical_failure_count/framework_error_count.
+- 45 new tests (587 total, 5 still self-skipped): retry (7), redaction +
+  JSONFormatter integration (13, including a regression test for the
+  extra-fields bug), evaluator timeout/crash isolation/partial semantics
+  (11), auth (8), request size limit (4), `/ready` (2). "Unavailable
+  Phoenix" and "unavailable evaluator" were already well covered by
+  Sprint 9's `test_registration_failure_falls_back_to_a_working_tracer`
+  and Sprint 5-7's framework-client infra-failure tests respectively —
+  judged sufficient rather than duplicated.
+- Explicitly out of scope per the sprint plan ("implement only high-value
+  hardening" — deferred, not attempted): closing the chunked-transfer-
+  encoding gap in the request-size limit with a streaming byte-counter;
+  per-user/per-role RBAC beyond the single-shared-key boundary; a hard
+  wall-clock kill for a hung evaluator thread (not possible cross-platform
+  in Python without a subprocess, which would be a much larger change);
+  encrypting the SQLite policy/baseline/decision store at rest.
+
 ## Current sprint
 
-Sprint 11 — Docker and GitHub Actions CI/CD: **complete**.
+Sprint 12 — Security, Reliability, and Operational Hardening: **complete**.
 
 ## Outstanding work (future sprints, not started)
 
@@ -1176,7 +1346,35 @@ Sprint 11 — Docker and GitHub Actions CI/CD: **complete**.
   "Run gate".
 - **Dashboard has no authentication** — it's an internal tool assumed to
   run behind whatever network boundary/VPN protects the backend API
-  itself; nothing in `frontend/` adds its own auth layer.
+  itself; nothing in `frontend/` adds its own auth layer. Sprint 12's
+  `AQG_API_KEY` boundary is off by default, so this doesn't interact with
+  the dashboard out of the box — but if `AQG_API_KEY` is ever set,
+  `frontend/src/api/client.ts` does not yet send an `X-API-Key` header,
+  so every mutating dashboard action ("Run gate", running an evaluation)
+  would start failing with 401. Wiring the dashboard to send that header
+  (e.g. via a `VITE_API_KEY`/runtime-config value) is a real follow-up
+  once/if `AQG_API_KEY` is actually deployed, not yet done.
+- **Request size limit has a chunked-transfer-encoding gap**:
+  `MaxBodySizeMiddleware` checks `Content-Length`; a client omitting that
+  header via chunked transfer encoding could still stream an oversized
+  body past it. No endpoint in this API intentionally accepts chunked
+  uploads today, so the realistic exposure is low — closing this fully
+  would mean a streaming byte-counter, deferred as lower-value for this
+  sprint's scope.
+- **Auth is a single shared secret, not per-user/per-role RBAC**:
+  `app/core/auth.py`'s `AuthBackend` Protocol is the extension point a
+  real identity system (per-user API keys, JWT-based auth, an actual
+  permissions table) would implement — not built this sprint.
+- **A hung evaluator's thread is abandoned, not killed**: Python has no
+  cross-platform way to forcibly terminate a thread;
+  `AQG_EVALUATOR_TIMEOUT_SECONDS` stops the *caller* from waiting on it,
+  but the thread itself keeps running in the background until it
+  finishes on its own. A hard kill would require running evaluators in
+  separate subprocesses, a much larger architectural change than this
+  sprint's scope.
+- **SQLite policy/baseline/decision store is not encrypted at rest**:
+  `AQG_POLICY_DB_PATH` writes a plain SQLite file; nothing in this
+  codebase encrypts it.
 - **Docker images aren't published to a registry**: `docker-build` in
   `pr.yml` builds and smoke-tests both images on every PR but never
   pushes them anywhere — there's no `docker push`/registry credential/
@@ -1239,8 +1437,8 @@ Sprint 11 — Docker and GitHub Actions CI/CD: **complete**.
   the Sprint 11 section above.
 - A `GET /api/v1/evaluations/runs` list endpoint: **resolved** (Sprint 10).
 - Retries/backoff for transient live-provider failures (`rate_limit`,
-  `unavailable`) — Sprint 3 normalizes and surfaces these but does not
-  retry them; a case that hits one simply fails.
+  `unavailable`): **resolved** (Sprint 12) — see
+  [[Sprint 12 decision 35]] and `app/reliability/retry.py`.
 - Streaming, multi-turn conversation, and tool-calling support in
   `ProviderRequest`/`ProviderResponse` — Sprint 3's contract is single-turn,
   single-response only.
@@ -1485,6 +1683,30 @@ gh workflow run live-eval.yml -f provider=openai \
   -f dataset_name=customer_support_bot -f dataset_version=1.1.0
 ```
 
+Sprint 12's security/reliability/operations hardening:
+
+```bash
+# run only the Sprint 12 test suites (no network, no real provider needed)
+uv run pytest -v tests/reliability/ tests/unit/test_redaction.py \
+  tests/unit/test_auth.py tests/api/test_request_size_limit.py \
+  tests/evaluation/test_runner_reliability.py
+
+# readiness vs. liveness
+curl http://127.0.0.1:8000/health   # liveness: always 200 if the process is up
+curl http://127.0.0.1:8000/ready    # readiness: 503 if a real dependency is broken
+
+# enable the basic RBAC boundary locally
+AQG_API_KEY=some-secret uv run uvicorn app.main:app --reload
+curl -X POST http://127.0.0.1:8000/api/v1/evaluations/runs \
+  -H "Content-Type: application/json" -H "X-API-Key: some-secret" \
+  -d '{"dataset_name": "customer_support_bot", "dataset_version": "1.1.0"}'
+# (omit the header, or get the key wrong, and the same request 401s)
+
+# dependency/security scanning, exactly what CI's security-scan job runs
+cd backend && uv tool run pip-audit --strict
+cd ../frontend && npm audit --audit-level=high
+```
+
 ## Important environment variables
 
 All are optional; sane defaults are used if unset. Prefix: `AQG_`.
@@ -1527,6 +1749,11 @@ All are optional; sane defaults are used if unset. Prefix: `AQG_`.
 | `AQG_TRACING_ENABLED` | `false` | Enables Phoenix/OpenTelemetry tracing. If setup fails (Phoenix unreachable, misconfigured endpoint) the app falls back to a no-op tracer rather than failing to start |
 | `AQG_PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006/v1/traces` | Where spans are exported. Only used when `AQG_TRACING_ENABLED=true` |
 | `AQG_PHOENIX_PROJECT_NAME` | `ai-quality-gate` | Project name spans are grouped under in the Phoenix UI |
+| `AQG_MAX_REQUEST_BODY_BYTES` | `2097152` (2MB) | Requests declaring a larger `Content-Length` get a 413, before any handler reads the body. Checked via header only — see the Sprint 12 chunked-transfer-encoding limitation in "Outstanding work" |
+| `AQG_API_KEY` | (none) | Enables the basic RBAC boundary (`app/core/auth.py`): unset means every endpoint is open (Sprint 1-11 behavior, unchanged); set means every mutating endpoint (`POST /evaluations/runs`, `/gate/decisions`, `/gate/baselines`, `/gate/policies`, `/rag/query`, `/rag/evaluate/{case_id}`) requires a matching `X-API-Key` header — every GET stays open either way |
+| `AQG_PROVIDER_RETRY_MAX_ATTEMPTS` | `3` | Total attempts (including the first) a live provider call gets before its last failure is accepted as final. Only TIMEOUT/RATE_LIMIT/UNAVAILABLE are retried. `1` reproduces exact Sprint 1-11 behavior (no retries) |
+| `AQG_PROVIDER_RETRY_BASE_DELAY_SECONDS` | `0.5` | Base delay for the exponential backoff between retries (doubles each attempt, plus up to 25% jitter) |
+| `AQG_EVALUATOR_TIMEOUT_SECONDS` | `60.0` | Wall-clock ceiling on one `Evaluator.evaluate()` call, independent of any framework's own judge-model HTTP timeout — catches a non-network hang. See the Sprint 12 "hung thread is abandoned, not killed" limitation in "Outstanding work" |
 | `AQG_CORS_ORIGINS` | `""` (empty) | Comma-separated browser origins allowed to call the API cross-origin (e.g. `http://localhost:5173` for the dashboard in dev). Empty means no CORS headers are sent at all |
 
 Frontend (`frontend/.env` or `.env.local`, read by Vite — not `AQG_`-prefixed):

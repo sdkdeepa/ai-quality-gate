@@ -5,10 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import datasets, evaluations, gate, health, rag, reports, status
+from app.core.auth import ApiKeyAuthBackend
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
-from app.core.middleware import RequestIDMiddleware
+from app.core.middleware import MaxBodySizeMiddleware, RequestIDMiddleware
 from app.domain import EvaluationCase, EvaluationRun, GoldenDataset
 from app.domain.release_policy import default_policy
 from app.evaluation.deepeval.factory import build_deepeval_evaluators
@@ -77,7 +78,13 @@ def create_app() -> FastAPI:
         + build_deepeval_evaluators(settings)
         + build_openai_evals_evaluators(settings)
     )
-    app.state.evaluation_runner = EvaluationRunner(evaluators=evaluators, tracer=app.state.tracer)
+    app.state.evaluation_runner = EvaluationRunner(
+        evaluators=evaluators,
+        tracer=app.state.tracer,
+        provider_retry_max_attempts=settings.provider_retry_max_attempts,
+        provider_retry_base_delay_seconds=settings.provider_retry_base_delay_seconds,
+        evaluator_timeout_seconds=settings.evaluator_timeout_seconds,
+    )
     app.state.provider_factory = ProviderFactory(settings, app.state.dataset_service)
     app.state.evaluation_service = EvaluationService(
         dataset_service=app.state.dataset_service,
@@ -124,6 +131,12 @@ def create_app() -> FastAPI:
     # repository of its own (reports are generated on demand, not stored).
     app.state.report_service = ReportService(app.state.policy_service)
 
+    # Sprint 12 — basic RBAC boundary (app/core/auth.py). Off entirely
+    # when AQG_API_KEY is unset — every `require_write_access`-gated route
+    # becomes a no-op check, matching every other opt-in feature's
+    # convention in this codebase.
+    app.state.auth_backend = ApiKeyAuthBackend(settings.api_key)
+
     if settings.cors_origins_list:
         app.add_middleware(
             CORSMiddleware,
@@ -133,6 +146,14 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
+    # Sprint 12 — request size limit. `add_middleware` calls stack so the
+    # LAST one added ends up OUTERMOST (runs first on each request) — so
+    # with RequestIDMiddleware added after this, every request, including
+    # one this middleware rejects for size, still gets a request_id and
+    # still shows up in RequestIDMiddleware's "request completed" log line
+    # with its real status code (413) — an oversized-request rejection is
+    # exactly as observable as any other response, not a silent drop.
+    app.add_middleware(MaxBodySizeMiddleware, max_body_bytes=settings.max_request_body_bytes)
     app.add_middleware(RequestIDMiddleware)
     register_exception_handlers(app)
 

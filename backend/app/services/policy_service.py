@@ -6,6 +6,8 @@ comparison utility (requirement #8's five API capabilities all route
 through this one service).
 """
 
+import logging
+
 from app.core.exceptions import NotFoundError
 from app.domain.baseline import Baseline
 from app.domain.case_result import CaseResult
@@ -15,6 +17,8 @@ from app.domain.release_policy import ReleasePolicy
 from app.policy.engine import PolicyEngine, aggregate_metrics_for_run, pass_rate_for_run
 from app.repositories.in_memory import InMemoryCaseResultStore, InMemoryRepository
 from app.repositories.sqlite import BaselineRepository, GateDecisionRepository, PolicyRepository
+
+logger = logging.getLogger("app.policy")
 
 
 class PolicyService:
@@ -67,6 +71,27 @@ class PolicyService:
         baseline = self._baseline_repository.get_latest_for_dataset(run.dataset_name)
         decision = self._engine.decide(run, case_results, policy, baseline)
         self._gate_decision_repository.add(decision)
+        # Sprint 12 — operations requirement: every field an operator
+        # would need to answer "what was actually decided, against what,
+        # and why" without opening a second tool, on the single log line
+        # marking the decision itself.
+        logger.info(
+            "gate decision recorded",
+            extra={
+                "run_id": run.id,
+                "trace_id": run.trace_id,
+                "decision_id": decision.id,
+                "decision_status": decision.status.value,
+                "dataset_name": run.dataset_name,
+                "dataset_version": run.dataset_version,
+                "provider": run.provider,
+                "model": run.model,
+                "policy_id": policy.id,
+                "policy_version": policy.version,
+                "critical_failure_count": len(decision.critical_failures),
+                "framework_error_count": sum(decision.framework_errors.values()),
+            },
+        )
         return decision
 
     def get_decision(self, decision_id: str) -> GateDecision:

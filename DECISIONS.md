@@ -1527,3 +1527,197 @@ reasonable for "does the pipeline work at all," but it means the smoke
 suite would need a small edit if that dataset were ever renamed or
 removed, rather than automatically adapting to whatever datasets happen
 to be loaded.
+
+## Sprint 12 — Security, Reliability, and Operational Hardening
+
+### 35. Evaluator failure isolation reuses the existing infrastructure-error convention instead of inventing a parallel one; "partial" is one signal covering both
+
+**Decision:** When `EvaluationRunner` catches an evaluator timing out or
+raising an unexpected exception, it converts that into an ordinary
+`MetricResult` with `metadata["error_type"]` set to `"timeout"` or
+`"unavailable"` (`_isolated_failure_result`) — the exact same convention
+Sprint 5/6/7's RAGAS/DeepEval/OpenAI-Evals clients already use for their
+own judge-call infrastructure failures (a rate limit, an auth error, a
+malformed judge response). `app/policy/engine.py`'s `_metric_status()`
+already classifies any `MetricResult` with `metadata["error_type"]` as
+`infrastructure_error`, so no changes were needed there at all.
+`CaseResult.partial` is `True` whenever *any* metric result in that case
+carries `error_type` — whether it came from a framework's own client
+hitting a normal infrastructure failure, or from this sprint's new
+runner-level isolation. Both facts mean the same thing from a caller's
+point of view ("this case's evaluation is incomplete, not just
+imperfect"), so they share one flag rather than two.
+
+**Reason:** The alternative — inventing a separate "isolation failure"
+concept distinct from "framework infrastructure failure" — would mean
+`app/policy/engine.py` (and every future consumer: reports, the
+dashboard, a future alerting rule) would need to know about and handle
+two different kinds of "this metric didn't really run," for no
+observable difference in what a human or the Policy Engine should do
+about either one. Reusing the existing convention means Sprint 12's
+entire failure-isolation mechanism plugs into the Policy Engine's
+existing `on_infrastructure_failure` (block/warn/ignore) policy setting
+immediately, with zero changes to `app/policy/`.
+
+**Alternatives considered:** A distinct `metadata["isolation_failure"] =
+true` flag alongside (not instead of) `error_type` — rejected; it would
+let a reader distinguish "the framework's own client failed" from "the
+runner had to step in," which has some diagnostic value, but at the cost
+of the Policy Engine (and everything downstream) needing to know about a
+second flag that doesn't change any actual behavior. If that
+distinction becomes valuable later (e.g. for debugging why isolation
+triggers are increasing over time), it can be added as an additional,
+non-behavioral metadata key without disturbing this design. A
+`CaseResult.partial` computed only from the NEW isolation mechanism
+(excluding ordinary framework infra failures already covered since
+Sprint 5) — rejected as inconsistent: a case where a RAGAS judge hit a
+rate limit is just as evaluation-incomplete as one where an evaluator
+crashed, and treating only the newer mechanism as "partial" would make
+the flag mean "isolated via Sprint 12's specific code path" rather than
+the more useful "this case's evaluation is incomplete."
+
+**Trade-off:** `partial=True` cannot by itself tell you *why* — you still
+need to look at the individual `MetricResult.metadata["error_type"]`
+values to know whether it was a timeout, a crash, or an ordinary
+framework infra failure. This is intentional (see "Alternatives") but
+worth naming: `partial` is a summary signal for "should I look closer,"
+not a diagnosis.
+
+### 36. Request size limiting checks Content-Length only; closing the chunked-transfer gap was judged lower-value than shipping the common-case protection now
+
+**Decision:** `MaxBodySizeMiddleware` rejects a request with 413 when its
+`Content-Length` header declares a size over `AQG_MAX_REQUEST_BODY_BYTES`
+— checked before any handler reads the body, with zero buffering. It does
+not stream and count bytes as they arrive, so a client that omits
+`Content-Length` via chunked transfer encoding could still send an
+oversized body past this check.
+
+**Reason:** Every client this API actually expects (browsers via the
+dashboard, `curl`, `httpx`, `requests`, any normal HTTP library) sends
+`Content-Length` by default for a JSON body — chunked encoding is an
+opt-in choice a client has to deliberately make, not something that
+happens by accident. A `Content-Length` check is O(1), reads nothing,
+and covers the realistic threat model (a misbehaving or malicious client
+declaring/sending a huge JSON body to an evaluation/gate/RAG endpoint)
+at effectively zero cost. A full streaming byte-counter is real,
+implementable work (wrapping the ASGI `receive` channel, counting bytes
+across possibly-many chunks, aborting mid-stream) for a gap this API's
+actual traffic shape doesn't exercise — none of the six mutating
+endpoints intentionally accepts a chunked upload.
+
+**Alternatives considered:** A streaming byte-counter wrapping ASGI
+`receive` — not rejected outright, deferred (see PROJECT_STATE.md
+"Outstanding work") as lower-value for this sprint's "implement only
+high-value hardening" instruction than the security/reliability items
+that shipped instead. Relying on Starlette/uvicorn's own default
+header-size and line-length limits alone (no application-level check at
+all) — rejected; those bound individual header lines, not a JSON body's
+total declared size, which is the actual thing worth capping here.
+
+**Trade-off:** A client specifically crafting a chunked-encoded request
+without `Content-Length` bypasses this protection entirely. Accepted as a
+known, documented gap rather than closed, on the reasoning above — revisit
+if this API ever adds an endpoint that legitimately accepts a streamed/
+chunked upload, since that would change the realistic threat model this
+decision leans on.
+
+### 37. A single shared API key gating write access is "basic RBAC," not a placeholder — full per-user RBAC was explicitly out of scope, not merely deferred by accident
+
+**Decision:** `app/core/auth.py` ships exactly two roles: anyone (no
+credential needed) can read, and the holder of one shared secret
+(`AQG_API_KEY`) can write. There is no per-user identity, no
+distinction between "can run evaluations" and "can register a new
+policy," and no audit trail of *which* key-holder did *what* beyond
+whatever the request logs already capture (Sprint 12 also added: every
+gate decision and evaluation run completion is logged with full context,
+just not a specific human identity). The `AuthBackend` Protocol exists
+specifically so a real system (per-user keys mapped to permissions, JWT-
+based identity, a roles table) can be dropped in behind
+`require_write_access` later without touching a single router — every
+gated endpoint depends on `require_write_access`, never on
+`ApiKeyAuthBackend` directly.
+
+**Reason:** The sprint's own instruction offered a choice — "a basic RBAC
+boundary OR a documented auth abstraction" — and this ships both at once
+for roughly the cost of one: a single shared secret is the minimum
+possible implementation of "distinguish read from write," and writing it
+behind a Protocol rather than calling `Settings.api_key` directly from
+every router costs almost nothing extra while being the actual
+"documented auth abstraction" the instruction asked for. Building real
+per-user RBAC (a user/key/role data model, key issuance and rotation,
+a permissions matrix finer than "read vs. write") is a substantially
+larger feature — its own sprint's worth of domain modeling, migrations,
+and UI, not a corner of a hardening sprint already covering five other
+areas.
+
+**Alternatives considered:** No auth at all, only the documented
+`AuthBackend` Protocol with no concrete implementation shipped —
+rejected; "documented abstraction" with nothing behind it gives nobody
+anything to actually turn on today, and the instruction's "OR" reads as
+"at least one of these needs to be real," not "a boundary in principle."
+Bearer-token/`Authorization` header instead of `X-API-Key` — rejected as
+unnecessary complexity for a single shared secret (Bearer implies a
+token *scheme*, typically OAuth-flavored; a bespoke header for a bespoke
+single-secret check is more honest about what this actually is).
+Gating specific fields within an endpoint (e.g. requiring the key only
+for `policy_id` overrides) rather than whole endpoints — rejected as
+needless granularity for a "basic" boundary; every mutating endpoint
+gated uniformly is simpler to reason about and document.
+
+**Trade-off:** Anyone holding the one key can do anything any other
+holder can — there's no way to give someone "can run evaluations but not
+register policies," and no per-holder audit trail. This is the
+explicit scope of "basic," not an oversight; see PROJECT_STATE.md's
+Outstanding Work for what a real system would add.
+
+### 38. Evaluator timeouts stop the caller from waiting, not the evaluator from running — Python's threading model makes a true hard-kill unavailable without a much larger change
+
+**Decision:** `EvaluationRunner._call_evaluator` runs
+`Evaluator.evaluate()` in a single-worker `ThreadPoolExecutor` and calls
+`future.result(timeout=...)`. On a timeout, the executor is shut down
+with `wait=False, cancel_futures=True` — meaning the *caller* stops
+waiting and moves on immediately, but the already-running worker thread
+is not forcibly terminated; it keeps executing in the background
+(invisibly, with its eventual result discarded) until it finishes or the
+process itself exits.
+
+**Reason:** Python has no cross-platform, safe way to forcibly kill a
+running thread — `threading`/`concurrent.futures` deliberately expose no
+such API, because forcibly terminating a thread at an arbitrary point
+can corrupt shared state (a lock left held, a partially-written data
+structure) in ways a subprocess kill does not. The property that actually
+matters for this sprint's "evaluator timeouts" requirement is that *the
+run does not hang forever waiting on one bad evaluator* — which
+`future.result(timeout=...)` plus a non-blocking shutdown fully achieves,
+verified directly (a 30-second-sleeping evaluator returns control to the
+caller in ~0.2s, the configured timeout, not 30s). Whether the abandoned
+thread itself is still running somewhere is invisible to and unaffected
+by anything the rest of the request/run does.
+
+**Alternatives considered:** Running each evaluator in a separate
+subprocess (which *can* be forcibly killed, e.g. via `SIGKILL`) — a real
+option that would close this gap completely, rejected for this sprint as
+a substantially larger change: it means serializing `EvaluationInput`
+across a process boundary, standing up a worker-process pool instead of
+a thread pool, and handling that pool's own lifecycle — a reasonable
+future increment (noted in PROJECT_STATE.md's Outstanding Work) but not
+"high-value hardening" sized for this sprint next to the other five
+areas it covers. `asyncio` with `asyncio.wait_for` instead of threads —
+rejected; `Evaluator.evaluate()` is a synchronous method across every
+existing framework (deterministic, RAGAS, DeepEval, OpenAI-Evals), and
+asyncio's own cancellation has the same fundamental limitation as
+threads for genuinely blocking (non-`await`-ing) code — a synchronous
+evaluator that hangs on a blocking call wouldn't actually be cancellable
+by `asyncio.wait_for` either, so this would add complexity without
+closing the actual gap.
+
+**Trade-off:** A hung evaluator's thread keeps consuming whatever
+resources it was using (CPU, an open connection, memory) for as long as
+it keeps running, invisibly, after its timeout has already been reported
+to the caller. In the worst case (many hung evaluators across many
+concurrent requests), this could accumulate abandoned threads over time.
+Acceptable for this sprint given evaluators are expected to fail this way
+rarely (a genuine hang, not an ordinary error, which already returns
+promptly via the existing `ProviderError`/framework-client conventions);
+worth revisiting if evaluator hangs turn out to be common enough in
+practice to matter operationally.
