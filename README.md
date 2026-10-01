@@ -1,129 +1,165 @@
 # AI Quality Gate
 
-An internal engineering platform that evaluates LLM and RAG applications
-before release and returns a **PASS / WARN / BLOCK** decision based on
-configurable quality thresholds.
+A production-oriented reference implementation for evaluating LLM and RAG applications before release. It runs versioned golden datasets, normalizes signals from deterministic and model-based evaluators, compares results with policy and approved baselines, and returns an auditable **PASS / WARN / BLOCK** decision.
 
-This is not a chatbot and not a tutorial project — it's a release gate:
-evaluation frameworks (DeepEval, RAGAS, OpenAI Evals, LangChain, Phoenix)
-plug in as signal producers behind an internal evaluation interface, but
-orchestration, thresholds, baseline comparison, and the release decision
-itself are owned by the Quality Gate, not by any framework.
+This repository is an engineering reference project, not a production-deployed service.
 
-## Status
+## What it does
 
-**Sprint 12 — Security, Reliability, and Operational Hardening: complete.**
+The Quality Gate separates **evaluation signals** from **release policy**. RAGAS, DeepEval, OpenAI-model graders, and deterministic checks produce normalized `MetricResult`s. The platform-owned `PolicyEngine` decides whether a run can ship.
 
-The service loads versioned golden datasets from disk and grades
-system-under-test responses with 8 deterministic evaluators (exact/
-required/forbidden-phrase matching, JSON schema compliance, expected-refusal
-detection, citation presence, latency and cost thresholds), 4 RAGAS-backed
-evaluators (faithfulness, answer relevancy, context precision, context
-recall) for RAG cases, a DeepEval G-Eval custom-criteria evaluator for
-qualitative/semantic checks (tone, policy adherence, or any natural-language
-rubric), and two OpenAI-model-graded evaluators (closed-set label
-classification for policy/behavior/quality checks, and fact-checklist
-scoring for structured answer correctness — built directly on OpenAI's
-Responses API, not the now-deprecated hosted Evals product) — all three
-opt-in via `AQG_RAGAS_ENABLED`/`AQG_DEEPEVAL_ENABLED`/`AQG_OPENAI_EVALS_ENABLED`,
-disabled by default, and independently selectable per run via an optional
-`frameworks` request field. Responses come from a provider abstraction — a
-`DeterministicProvider` (fixture-backed, for tests/CI), `OpenAIProvider`,
-and `GeminiProvider` — selected per evaluation run; evaluation logic never
-depends on the OpenAI/Gemini/RAGAS/DeepEval SDKs directly, and provider/
-evaluator failures (timeout, rate limit, unavailable, malformed response,
-authentication) are normalized rather than raised. A platform-owned release
-Policy Engine (`app/policy/engine.py`) — the only place PASS/WARN/BLOCK is
-ever computed — turns a run's results plus a configurable `ReleasePolicy`
-and an optional approved `Baseline` into an auditable `GateDecision`,
-persisted to SQLite (`AQG_POLICY_DB_PATH`) behind the API's `/gate/*`
-endpoints (run gate, inspect/list decisions, approve baselines, compare
-runs, manage policies). Optional Phoenix/OpenTelemetry tracing
-(`AQG_TRACING_ENABLED`) instruments every run, case, provider call, RAG
-retrieval, and evaluator execution, with trace IDs persisted on both the
-run and its gate decision for audit correlation — Phoenix only ever
-observes, never decides (see `docs/debugging-failed-runs.md`). Every
-`GateDecision` can be exported as a downloadable JSON or HTML report
-(`GET /reports/{decision_id}/json`|`/html`), and a separate `frontend/`
-— a Vite + React + TypeScript internal engineering dashboard (Overview,
-Evaluation Runs, Run Detail, Policies, Datasets) — gives a read-oriented
-view over the whole system, entirely as a thin client over this same API.
-A small LangChain + ChromaDB RAG pipeline exists as a system under test.
-Both services have production Dockerfiles (non-root, health-checked, no
-baked-in secrets) plus a `docker-compose.yml` for local/self-hosted use,
-and GitHub Actions runs a fully deterministic PR pipeline (lint, backend
-unit + API tests, frontend tests, an end-to-end smoke suite, Docker build
-validation, and coverage reporting) that never requires a paid model API
-— a separate, manual-only workflow handles live-provider evaluation
-against real API keys, gated by repository secrets and failing the job on
-a BLOCK decision. See `docs/ci-cd.md` for the deterministic-vs-live
-breakdown, secrets setup, and cost controls, and `PROJECT_STATE.md` for
-full capability detail and outstanding work.
+Core capabilities:
 
-On top of all of that, the service is hardened for security, reliability,
-and operations: request bodies over a configurable size are rejected
-before a handler ever reads them; logs are structured JSON with secrets
-(API keys, bearer tokens, password/api_key-style fields) redacted
-automatically; a basic RBAC boundary (`AQG_API_KEY`, off by default) gates
-every mutating endpoint while every GET stays open; live provider calls
-retry transient failures (timeout/rate-limit/unavailable) with bounded,
-exponential backoff; every evaluator runs under a wall-clock timeout and
-is isolated so one hung or crashing evaluator — or even a crashing case —
-never takes down the rest of a run, with the result explicitly marked
-`partial` rather than silently incomplete; a `GET /ready` endpoint
-reports real dependency health distinct from `GET /health`'s liveness
-check; and `pip-audit`/`npm audit` run as blocking checks on every PR. See
-`PROJECT_STATE.md`'s Sprint 12 section for the full list.
+- Versioned golden datasets with critical cases
+- Deterministic checks for exact/phrase/schema/refusal/citation/latency/cost behavior
+- OpenAI and Gemini providers behind a provider-neutral interface
+- Sample LangChain + Chroma RAG workload used as a system under test
+- RAGAS, DeepEval, and OpenAI-model graders behind evaluator adapters
+- Baselines, regression detection, latency/cost budgets, and PASS/WARN/BLOCK policy
+- Optional Phoenix/OpenTelemetry tracing
+- JSON/HTML reports and a React engineering dashboard
+- Deterministic GitHub Actions CI, optional live-provider workflow, and Docker packaging
+- Request limits, redacted logging, bounded retries, evaluator timeouts, readiness checks, and a basic write-auth boundary
 
-See [`PROJECT_STATE.md`](PROJECT_STATE.md) for current architecture,
-completed capabilities, outstanding work, and exact run commands, and
-[`DECISIONS.md`](DECISIONS.md) for the architecture decision log.
+## Architecture
 
-## Quick start
+```mermaid
+flowchart LR
+    GD["Golden Dataset"] --> R["EvaluationRunner"]
+    P["System Under Test / Provider"] <--> R
+    R --> E["Evaluator adapters"]
+    E --> PE["PolicyEngine"]
+    B["Approved Baseline"] --> PE
+    PE --> D["PASS / WARN / BLOCK"]
+    D --> RP["JSON / HTML Reports"]
+    D --> UI["React Dashboard"]
+    R -. optional tracing .-> PH["Phoenix / OpenTelemetry"]
+```
+
+The important boundary is deliberate: **frameworks provide signals; the Quality Gate owns release policy.** Phoenix observes execution but never participates in the decision.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for component, evaluation-pipeline, and decision-flow diagrams.
+
+## Evaluation model
+
+A run loads a named/versioned golden dataset, sends each case through a provider, and applies the evaluators that are relevant to that case. Evaluator outputs are normalized into the same internal model regardless of framework. Infrastructure failures are represented separately from quality failures, so a rate limit or judge timeout is not treated as a bad model answer.
+
+The policy engine then evaluates pass rate, required metrics, critical cases, baseline regressions, latency/cost budgets, and evaluator availability. A run with no scored metrics cannot pass.
+
+See [EVALUATION_STRATEGY.md](EVALUATION_STRATEGY.md) for the framework and policy rationale.
+
+## Repository structure
+
+```text
+ai-quality-gate/
+├── README.md
+├── ARCHITECTURE.md
+├── EVALUATION_STRATEGY.md
+├── SECURITY.md
+├── PROJECT_STATE.md
+├── DECISIONS.md
+├── docker-compose.yml
+├── .github/workflows/       # deterministic PR CI + manual live evaluation
+├── docs/                    # CI/CD and Phoenix debugging guides
+├── scripts/smoke_test.sh
+├── frontend/                # React + TypeScript dashboard
+└── backend/
+    └── app/
+        ├── domain/
+        ├── providers/
+        ├── evaluation/
+        ├── rag/
+        ├── policy/
+        ├── reports/
+        ├── observability/
+        ├── reliability/
+        ├── repositories/
+        ├── services/
+        ├── api/
+        └── core/
+```
+
+## Run locally
+
+With Docker:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Backend: `http://localhost:8000`  
+Dashboard: `http://localhost:5173`
+
+Without Docker:
 
 ```bash
 cd backend
-uv sync                              # install dependencies
-uv run uvicorn app.main:app --reload # run the API at http://127.0.0.1:8000
-uv run pytest -v                     # run the test suite
-uv run ruff check .                  # lint
+uv sync
+uv run uvicorn app.main:app --reload
+uv run pytest -v
+uv run ruff check .
 ```
-
-Once running: `GET /health`, `GET /api/v1/status`, interactive docs at
-`/docs`.
-
-To run the engineering dashboard against that backend:
 
 ```bash
 cd frontend
 npm install
-npm run dev    # dev server, defaults to http://localhost:8000/api/v1
-npm test       # Vitest + React Testing Library
-npm run build  # production build (tsc -b && vite build)
+npm run dev
+npm test
+npm run build
 ```
 
-Or run both together with Docker Compose (no local Python/Node setup
-needed at all):
+All supported environment variables and safe defaults are documented in [.env.example](.env.example). Real providers, model-based evaluators, authentication, and Phoenix tracing are opt-in.
+
+## Sample evaluation
 
 ```bash
-cp .env.example .env   # every value is optional
-docker compose up --build
-# backend at http://localhost:8000, dashboard at http://localhost:5173
+curl -X POST http://localhost:8000/api/v1/evaluations/runs \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name":"customer_support_bot","dataset_version":"1.1.0"}'
 ```
 
-See `docs/ci-cd.md` for how CI runs the same checks automatically (and
-how the separate, manual, secrets-gated live-evaluation workflow works).
+The bundled deterministic dataset contains 40 cases. Its fixture run intentionally includes failures so the gate can demonstrate critical-case and release-policy behavior. Run the gate with the returned run id:
 
-## Repository layout
+```bash
+curl -X POST http://localhost:8000/api/v1/gate/decisions \
+  -H "Content-Type: application/json" \
+  -d '{"run_id":"<run-id>"}'
+```
 
-```
-ai-quality-gate/
-├── PROJECT_STATE.md   # architecture, capabilities, outstanding work, run commands
-├── DECISIONS.md        # architecture decision log
-├── docker-compose.yml   # local/self-hosted backend + frontend orchestration
-├── .github/workflows/    # deterministic PR CI + manual live-evaluation workflow
-├── scripts/              # smoke_test.sh - deterministic end-to-end smoke suite
-├── docs/                # task-oriented guides (debugging-failed-runs.md, ci-cd.md)
-├── frontend/            # React/TypeScript internal engineering dashboard (+ Dockerfile)
-└── backend/            # FastAPI service (domain model, API, tests) (+ Dockerfile)
-```
+A decision can be exported as JSON or HTML through `/api/v1/reports/{decision_id}/json` and `/html`.
+
+![Sample HTML report](docs/images/sample-html-report.png)
+
+## Testing and CI
+
+The backend uses PyTest; the frontend uses Vitest and React Testing Library. Tests cover domain validation, datasets, provider contracts, evaluator adapters, RAG, policy decisions, reports, observability boundaries, API behavior, security/reliability paths, and the dashboard.
+
+Every PR runs deterministic checks without paid model calls: lint/format, backend tests, API/integration tests, frontend tests, an end-to-end smoke test against a running service, Docker build validation, coverage, and dependency scans. A separate manual workflow can run a controlled live-provider evaluation using repository secrets and uploads reports as artifacts. See [docs/ci-cd.md](docs/ci-cd.md).
+
+## Observability
+
+When enabled, OpenTelemetry traces expose the run as nested spans for cases, provider calls, RAG retrieval/generation, and evaluator execution. Trace IDs are correlated with run and gate records. If Phoenix is unavailable, tracing degrades without changing release behavior. See [docs/debugging-failed-runs.md](docs/debugging-failed-runs.md).
+
+## Production gaps and trade-offs
+
+The project intentionally stops short of claiming production deployment. Current limitations include:
+
+- Datasets, evaluation runs, and case results are in memory; policies, baselines, and gate decisions use SQLite.
+- Write access can be protected by one shared API key, not per-user RBAC.
+- TLS termination, rate limiting, and a production identity/audit system are outside this repository.
+- Request-size enforcement relies on `Content-Length`, so chunked transfer is a known gap.
+- Evaluator timeouts stop the caller from waiting but cannot forcibly kill an already-running Python thread.
+- Evaluation is synchronous; higher scale would require durable storage, async job execution, connection pooling, and horizontal scaling.
+
+See [SECURITY.md](SECURITY.md) for the security boundary and [DECISIONS.md](DECISIONS.md) for the major architectural trade-offs.
+
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — system design, data flow, decision flow, technology choices
+- [EVALUATION_STRATEGY.md](EVALUATION_STRATEGY.md) — evaluator responsibilities, failure semantics, baselines, release policy
+- [SECURITY.md](SECURITY.md) — implemented controls and known limitations
+- [docs/ci-cd.md](docs/ci-cd.md) — deterministic and live CI workflows
+- [docs/debugging-failed-runs.md](docs/debugging-failed-runs.md) — trace-based debugging
+- [PROJECT_STATE.md](PROJECT_STATE.md) — concise current-state handoff
+- [DECISIONS.md](DECISIONS.md) — architectural decision record

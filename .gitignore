@@ -9,6 +9,8 @@ __pycache__/
 # RAG vector store (rebuilt from backend/rag_corpus/ on startup)
 backend/chroma_store/
 
+#
+
 # Env
 .env
 .env.*

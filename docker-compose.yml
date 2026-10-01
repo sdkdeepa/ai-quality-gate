@@ -23,7 +23,7 @@ services:
       # container-to-container), so CORS must allow the origin the
       # browser will actually load the dashboard from. Overridable via
       # .env if you're running the frontend on a different port/host.
-      AQG_CORS_ORIGINS: ${AQG_CORS_ORIGINS:-http://localhost:5173}
+      AQG_CORS_ORIGINS: ${AQG_CORS_ORIGINS:-http://localhost:5174}
       # Real persistence across container restarts (the app's own default
       # is ":memory:" - see PROJECT_STATE.md) - backed by the named
       # volume below.
