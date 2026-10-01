@@ -91,6 +91,25 @@ docker compose up --build
 Backend: `http://localhost:8000`  
 Dashboard: `http://localhost:5173`
 
+To stop: `docker compose down` (Ctrl+C alone, or closing the terminal, often
+leaves the containers running in the background).
+
+Evaluation runs are in-memory and reset with the backend process — useful
+when testing locally and you want a clean slate. Restarting just the
+backend is faster than a full teardown:
+
+```bash
+docker compose restart backend
+```
+
+If you do want a full stop/start cycle (e.g. to also pick up a code change
+in `docker-compose.yml` or a Dockerfile):
+
+```bash
+docker compose down
+docker compose up --build
+```
+
 Without Docker:
 
 ```bash

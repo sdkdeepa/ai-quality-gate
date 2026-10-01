@@ -3,6 +3,7 @@ import type {
   DatasetDetail,
   DatasetSummary,
   GateDecision,
+  ProviderName,
   ReleasePolicy,
   RunDetail,
   RunSummary,
@@ -61,7 +62,7 @@ export const api = {
 
   listRuns: () => request<RunSummary[]>('/evaluations/runs'),
   getRun: (runId: string) => request<RunDetail>(`/evaluations/runs/${runId}`),
-  runEvaluation: (body: { dataset_name: string; dataset_version?: string; provider?: string }) =>
+  runEvaluation: (body: { dataset_name: string; dataset_version?: string; provider?: ProviderName }) =>
     request<RunSummary>('/evaluations/runs', { method: 'POST', body: JSON.stringify(body) }),
 
   listDecisions: (runId?: string) =>

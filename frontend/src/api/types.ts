@@ -5,6 +5,9 @@
 
 export type GateStatus = 'pass' | 'warn' | 'block'
 
+// Matches backend/app/api/evaluations.py's RunEvaluationRequest.provider Literal.
+export type ProviderName = 'deterministic' | 'openai' | 'gemini'
+
 export interface MetricResult {
   metric_name: string
   score: number

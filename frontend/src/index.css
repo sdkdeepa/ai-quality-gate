@@ -232,3 +232,40 @@ button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+.new-run-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
+.new-run-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.new-run-form select {
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: #fff;
+  min-width: 10rem;
+  text-transform: none;
+}
+
+.new-run-form .error-text {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}
