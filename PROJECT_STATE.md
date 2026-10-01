@@ -39,7 +39,7 @@ The sample LangChain + Chroma RAG pipeline is a **system under test**, not part 
 - Release policies, critical-case enforcement, approved baselines, regression comparison, latency/cost budgets
 - SQLite persistence for policies, baselines, and gate decisions
 - Optional Phoenix/OpenTelemetry tracing with trace-id correlation
-- JSON/HTML reports and React engineering dashboard
+- JSON/HTML reports and React engineering dashboard, including a form on the Evaluation Runs page to trigger a new run directly (dataset/version/provider, then redirects to the run's detail page)
 - Docker backend/frontend images and docker-compose
 - GitHub Actions deterministic PR CI plus optional manual live evaluation
 - Request-size limits, redacted logging, API-key write boundary, dependency scanning
