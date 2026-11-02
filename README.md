@@ -182,3 +182,7 @@ See [SECURITY.md](SECURITY.md) for the security boundary and [DECISIONS.md](DECI
 - [docs/debugging-failed-runs.md](docs/debugging-failed-runs.md) — trace-based debugging
 - [PROJECT_STATE.md](PROJECT_STATE.md) — concise current-state handoff
 - [DECISIONS.md](DECISIONS.md) — architectural decision record
+
+## License
+MIT. See [LICENSE](LICENSE).
+
