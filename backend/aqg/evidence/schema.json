@@ -1,0 +1,213 @@
+{
+  "$defs": {
+    "CheckEvidence": {
+      "additionalProperties": false,
+      "description": "One check (a test case, or one LLM metric on one case) and its outcome.",
+      "properties": {
+        "id": {
+          "description": "Stable id, the same across runs.",
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "description": "Human-readable name.",
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "suite": {
+          "anyOf": [
+            {
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Suite or group label.",
+          "title": "Suite"
+        },
+        "source": {
+          "$ref": "#/$defs/CheckSource"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckStatus"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Failure, error or skip message.",
+          "title": "Message"
+        },
+        "metrics": {
+          "description": "Optional numeric results, e.g. LLM metric scores.",
+          "patternProperties": {
+            "^\\S(?:[\\s\\S]*\\S)?$": {
+              "type": "number"
+            }
+          },
+          "title": "Metrics",
+          "type": "object"
+        },
+        "tags": {
+          "items": {
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "source",
+        "status"
+      ],
+      "title": "CheckEvidence",
+      "type": "object"
+    },
+    "CheckSource": {
+      "description": "The tool that produced a check.",
+      "enum": [
+        "pytest",
+        "vitest",
+        "playwright",
+        "llm"
+      ],
+      "title": "CheckSource",
+      "type": "string"
+    },
+    "CheckStatus": {
+      "description": "The outcome of one check. Only ``passed`` ever counts as passed.",
+      "enum": [
+        "passed",
+        "failed",
+        "skipped",
+        "error"
+      ],
+      "title": "CheckStatus",
+      "type": "string"
+    },
+    "EvidenceInput": {
+      "additionalProperties": false,
+      "description": "Where part of a run's evidence came from (a result file, or an LLM run).",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/InputFormat"
+        },
+        "path": {
+          "description": "Result file path, or the source run id for llm.",
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "path"
+      ],
+      "title": "EvidenceInput",
+      "type": "object"
+    },
+    "InputFormat": {
+      "description": "The kind of input a run was built from.",
+      "enum": [
+        "junit",
+        "llm"
+      ],
+      "title": "InputFormat",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "All the evidence for one gate decision.",
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "project": {
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+      "title": "Project",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Version"
+    },
+    "commit": {
+      "anyOf": [
+        {
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Commit"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/EvidenceInput"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "checks": {
+      "description": "Check ids must be unique within a run. An empty list is valid; the policy treats it as BLOCK.",
+      "items": {
+        "$ref": "#/$defs/CheckEvidence"
+      },
+      "title": "Checks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project",
+    "created_at"
+  ],
+  "title": "EvidenceRun",
+  "type": "object"
+}
