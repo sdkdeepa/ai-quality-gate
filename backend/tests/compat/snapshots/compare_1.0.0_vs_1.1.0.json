@@ -1,0 +1,56 @@
+{
+  "aggregate_metrics_a": {
+    "citation_presence": 0.75,
+    "estimated_cost_usd": 0.015545455,
+    "exact_match": 0.5,
+    "expected_refusal": 0.8,
+    "forbidden_phrases": 0.75,
+    "json_schema_compliance": 0.666666667,
+    "latency_ms": 954.545454545,
+    "required_phrases": 1.0
+  },
+  "aggregate_metrics_b": {
+    "citation_presence": 0.933333333,
+    "estimated_cost_usd": 0.0153,
+    "exact_match": 0.5,
+    "expected_refusal": 0.823529412,
+    "forbidden_phrases": 0.666666667,
+    "json_schema_compliance": 0.666666667,
+    "latency_ms": 862.5,
+    "required_phrases": 0.944444444
+  },
+  "metric_deltas": {
+    "citation_presence": 0.183333333,
+    "estimated_cost_usd": -0.000245455,
+    "exact_match": 0.0,
+    "expected_refusal": 0.023529412,
+    "forbidden_phrases": -0.083333333,
+    "json_schema_compliance": 0.0,
+    "latency_ms": -92.045454545,
+    "required_phrases": -0.055555556
+  },
+  "pass_rate_a": 0.681818182,
+  "pass_rate_b": 0.775,
+  "run_a": {
+    "completed_at": "<volatile>",
+    "dataset_name": "customer_support_bot",
+    "dataset_version": "1.0.0",
+    "id": "<volatile>",
+    "model": "fixture-v1",
+    "provider": "deterministic",
+    "started_at": "<volatile>",
+    "status": "completed",
+    "trace_id": null
+  },
+  "run_b": {
+    "completed_at": "<volatile>",
+    "dataset_name": "customer_support_bot",
+    "dataset_version": "1.1.0",
+    "id": "<volatile>",
+    "model": "fixture-v1",
+    "provider": "deterministic",
+    "started_at": "<volatile>",
+    "status": "completed",
+    "trace_id": null
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "cost_budget_action": "warn",
+  "cost_budget_usd": 0.001,
+  "created_at": "<volatile>",
+  "critical_case_action": "warn",
+  "id": "<volatile>",
+  "latency_budget_action": "block",
+  "latency_budget_ms": 500.0,
+  "max_regression_tolerance": 0.05,
+  "min_pass_rate": 0.6,
+  "name": "compat-strict",
+  "regression_action": "warn",
+  "required_metrics": [
+    {
+      "metric_name": "exact_match",
+      "min_score": 0.4,
+      "on_infrastructure_failure": "block",
+      "on_missing": "block"
+    },
+    {
+      "metric_name": "citation_presence",
+      "min_score": 0.95,
+      "on_infrastructure_failure": "block",
+      "on_missing": "warn"
+    },
+    {
+      "metric_name": "ragas_faithfulness",
+      "min_score": null,
+      "on_infrastructure_failure": "warn",
+      "on_missing": "warn"
+    }
+  ],
+  "version": "2.0.0"
+}

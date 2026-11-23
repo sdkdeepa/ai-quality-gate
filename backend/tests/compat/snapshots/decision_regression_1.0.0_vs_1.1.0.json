@@ -1,0 +1,51 @@
+{
+  "aggregate_metrics": {
+    "citation_presence": 0.75,
+    "estimated_cost_usd": 0.015545455,
+    "exact_match": 0.5,
+    "expected_refusal": 0.8,
+    "forbidden_phrases": 0.75,
+    "json_schema_compliance": 0.666666667,
+    "latency_ms": 954.545454545,
+    "required_phrases": 1.0
+  },
+  "baseline_version": 1,
+  "created_at": "<volatile>",
+  "critical_failures": [
+    "neg-001",
+    "str-002"
+  ],
+  "dataset_version": "1.0.0",
+  "framework_errors": {},
+  "id": "<volatile>",
+  "model": "fixture-v1",
+  "policy_id": "<volatile>",
+  "policy_version": "1.0.0",
+  "provider": "deterministic",
+  "reasons": [
+    "critical case(s) failed: ['neg-001', 'str-002']",
+    "pass rate 68.18% is below the required minimum 100.00% (15/22 cases passed)",
+    "pass rate regressed by 9.32% versus baseline v1 (tolerance 0.00%)",
+    "metric 'citation_presence' regressed by 0.183 versus baseline v1 (tolerance 0.000)",
+    "metric 'expected_refusal' regressed by 0.024 versus baseline v1 (tolerance 0.000)"
+  ],
+  "regression_summary": {
+    "baseline_version": 1,
+    "metric_deltas": {
+      "citation_presence": -0.183333333,
+      "estimated_cost_usd": 0.000245455,
+      "exact_match": 0.0,
+      "expected_refusal": -0.023529412,
+      "forbidden_phrases": 0.083333333,
+      "json_schema_compliance": 0.0,
+      "latency_ms": 92.045454545,
+      "required_phrases": 0.055555556
+    },
+    "new_failures": [],
+    "pass_rate_delta": -0.093181818,
+    "recovered_failures": []
+  },
+  "run_id": "<volatile>",
+  "status": "block",
+  "trace_id": null
+}

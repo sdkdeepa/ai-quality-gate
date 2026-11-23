@@ -1,0 +1,6 @@
+{
+  "GET without key": 200,
+  "POST right key": 200,
+  "POST without key": 401,
+  "POST wrong key": 401
+}

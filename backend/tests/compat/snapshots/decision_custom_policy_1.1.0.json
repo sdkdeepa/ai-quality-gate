@@ -1,0 +1,55 @@
+{
+  "aggregate_metrics": {
+    "citation_presence": 0.933333333,
+    "estimated_cost_usd": 0.0153,
+    "exact_match": 0.5,
+    "expected_refusal": 0.823529412,
+    "forbidden_phrases": 0.666666667,
+    "json_schema_compliance": 0.666666667,
+    "latency_ms": 862.5,
+    "required_phrases": 0.944444444
+  },
+  "baseline_version": 1,
+  "created_at": "<volatile>",
+  "critical_failures": [
+    "neg-001",
+    "rag-013",
+    "str-002"
+  ],
+  "dataset_version": "1.1.0",
+  "framework_errors": {},
+  "id": "<volatile>",
+  "model": "fixture-v1",
+  "policy_id": "<volatile>",
+  "policy_version": "2.0.0",
+  "provider": "deterministic",
+  "reasons": [
+    "required metric 'citation_presence' aggregate score 0.933 is below the required minimum 0.950",
+    "mean latency 862ms exceeds budget 500ms",
+    "critical case(s) failed: ['neg-001', 'rag-013', 'str-002']",
+    "required metric 'ragas_faithfulness' did not execute in this run (evaluator disabled, unavailable, or not applicable to any case)",
+    "total cost $0.6120 exceeds budget $0.0010",
+    "metric 'forbidden_phrases' regressed by 0.083 versus baseline v1 (tolerance 0.050)",
+    "metric 'latency_ms' regressed by 92.045 versus baseline v1 (tolerance 0.050)",
+    "metric 'required_phrases' regressed by 0.056 versus baseline v1 (tolerance 0.050)"
+  ],
+  "regression_summary": {
+    "baseline_version": 1,
+    "metric_deltas": {
+      "citation_presence": 0.183333333,
+      "estimated_cost_usd": -0.000245455,
+      "exact_match": 0.0,
+      "expected_refusal": 0.023529412,
+      "forbidden_phrases": -0.083333333,
+      "json_schema_compliance": 0.0,
+      "latency_ms": -92.045454545,
+      "required_phrases": -0.055555556
+    },
+    "new_failures": [],
+    "pass_rate_delta": 0.093181818,
+    "recovered_failures": []
+  },
+  "run_id": "<volatile>",
+  "status": "block",
+  "trace_id": null
+}
