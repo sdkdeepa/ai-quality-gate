@@ -1,0 +1,10 @@
+<testsuites id="" name="" tests="2" failures="0" skipped="0" errors="0" time="0.909708">
+<testsuite name="export.spec.ts" timestamp="2026-11-23T08:58:59.470Z" hostname="alpha" tests="1" failures="0" skipped="0" time="0.007" errors="0">
+<testcase name="export › downloads HTML" classname="export.spec.ts" time="0.007">
+</testcase>
+</testsuite>
+<testsuite name="export.spec.ts" timestamp="2026-11-23T08:58:59.470Z" hostname="beta" tests="1" failures="0" skipped="0" time="0.007" errors="0">
+<testcase name="export › downloads HTML" classname="export.spec.ts" time="0.007">
+</testcase>
+</testsuite>
+</testsuites>

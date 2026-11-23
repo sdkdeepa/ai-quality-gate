@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="1" skipped="2" tests="9" time="0.039" timestamp="2026-11-23T01:07:31.081659-08:00" hostname="vm"><testcase classname="sample_suite" name="test_passes" time="0.000" /><testcase classname="sample_suite" name="test_fails" time="0.001" /><testcase classname="sample_suite" name="test_fails" time="0.000"><failure message="AssertionError: assert 'export' == 'exports'&#10;  &#10;  - exports&#10;  ?       -&#10;  + export">def test_fails():
+&gt;       assert "export" == "exports"
+E       AssertionError: assert 'export' == 'exports'
+E         
+E         - exports
+E         ?       -
+E         + export
+
+sample_suite.py:21: AssertionError</failure></testcase><testcase classname="sample_suite" name="test_errors_in_setup" time="0.000" /><testcase classname="sample_suite" name="test_errors_in_setup" time="0.000"><error message="failed on setup with &quot;RuntimeError: database not reachable&quot;">@pytest.fixture
+    def broken_setup():
+&gt;       raise RuntimeError("database not reachable")
+E       RuntimeError: database not reachable
+
+sample_suite.py:13: RuntimeError</error></testcase><testcase classname="sample_suite" name="test_skipped" time="0.000"><skipped type="pytest.skip" message="not supported on CI">/tmp/regen/sample_suite.py:28: not supported on CI</skipped></testcase><testcase classname="sample_suite" name="test_expected_failure" time="0.000"><skipped type="pytest.xfail" message="known bug #12" /></testcase><testcase classname="sample_suite" name="test_flaky_passes_on_retry" time="0.000" /><testcase classname="sample_suite" name="test_flaky_passes_on_retry" time="0.000" /><testcase classname="sample_suite" name="test_unicode_titles[caf\xe9]" time="0.000" /><testcase classname="sample_suite" name="test_unicode_titles[\u65e5\u672c\u8a9e]" time="0.000" /><testcase classname="sample_suite.TestExport" name="test_downloads_html" time="0.000" /></testsuite></testsuites>
