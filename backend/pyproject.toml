@@ -30,7 +30,13 @@ dependencies = [
     "deepeval>=4.2.0,<5.0.0",
     "arize-phoenix-otel>=0.17.0,<0.18.0",
     "openinference-semantic-conventions>=0.1.0,<0.2.0",
+    # M6: quality-gate.yml for the aqg CLI. Already installed as an indirect
+    # dependency; listed here because aqg imports it directly.
+    "pyyaml>=6.0",
 ]
+
+[project.scripts]
+aqg = "aqg.cli:main"
 
 [dependency-groups]
 dev = [
