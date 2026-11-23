@@ -1,0 +1,1188 @@
+{
+  "GET /api/v1/datasets": {
+    "content_type": "application/json",
+    "shape": [
+      {
+        "case_count": "number",
+        "created_at": "str",
+        "description": "str",
+        "name": "str",
+        "version": "str"
+      }
+    ],
+    "status": 200
+  },
+  "GET /api/v1/datasets/{name}/latest": {
+    "content_type": "application/json",
+    "shape": {
+      "cases": [
+        {
+          "category": "str",
+          "critical": "bool",
+          "expected_answer": "str",
+          "expected_behavior": "str",
+          "id": "str",
+          "metadata": {
+            "forbidden_phrases": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|['str']|['str']|['str']|['str']|['str']",
+            "json_schema": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|{'items': \"None|{'properties': {'monthly_price_usd': {'type': 'str'}, 'name': {'type': 'str'}}, 'required': ['str'], 'type': 'str'}\", 'properties': \"None|{'eta_days': {'type': 'str'}, 'order_id': {'type': 'str'}, 'status': {'type': 'str'}}|{'category': {'type': 'str'}, 'priority': {'enum': ['str'], 'type': 'str'}}\", 'required': \"None|['str']|['str']\", 'type': 'str'}",
+            "match_mode": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|str|str",
+            "rag_scenario": "str",
+            "required_phrases": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']"
+          },
+          "name": "str",
+          "query": "str",
+          "reference_context": "['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|[]|[]|[]|[]|[]|[]|[]|[]|[]|[]|[]",
+          "tags": [
+            "str"
+          ]
+        }
+      ],
+      "created_at": "str",
+      "description": "str",
+      "name": "str",
+      "version": "str"
+    },
+    "status": 200
+  },
+  "GET /api/v1/datasets/{name}/{version}": {
+    "content_type": "application/json",
+    "shape": {
+      "cases": [
+        {
+          "category": "str",
+          "critical": "bool",
+          "expected_answer": "str",
+          "expected_behavior": "str",
+          "id": "str",
+          "metadata": {
+            "forbidden_phrases": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|['str']|['str']|['str']|['str']|['str']",
+            "json_schema": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|{'items': \"None|{'properties': {'monthly_price_usd': {'type': 'str'}, 'name': {'type': 'str'}}, 'required': ['str'], 'type': 'str'}\", 'properties': \"None|{'eta_days': {'type': 'str'}, 'order_id': {'type': 'str'}, 'status': {'type': 'str'}}|{'category': {'type': 'str'}, 'priority': {'enum': ['str'], 'type': 'str'}}\", 'required': \"None|['str']|['str']\", 'type': 'str'}",
+            "match_mode": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|str|str",
+            "rag_scenario": "str",
+            "required_phrases": "None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|None|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']"
+          },
+          "name": "str",
+          "query": "str",
+          "reference_context": "['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|['str']|[]|[]|[]|[]|[]|[]|[]|[]|[]|[]|[]",
+          "tags": [
+            "str"
+          ]
+        }
+      ],
+      "created_at": "str",
+      "description": "str",
+      "name": "str",
+      "version": "str"
+    },
+    "status": 200
+  },
+  "GET /api/v1/datasets/{name}/{version} unknown": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "GET /api/v1/evaluations/runs": {
+    "content_type": "application/json",
+    "shape": [
+      {
+        "case_count": "number",
+        "critical_failure_case_ids": [
+          "str"
+        ],
+        "failed_count": "number",
+        "passed_count": "number",
+        "run": {
+          "completed_at": "str",
+          "dataset_name": "str",
+          "dataset_version": "str",
+          "id": "str",
+          "model": "str",
+          "provider": "str",
+          "started_at": "str",
+          "status": "str",
+          "trace_id": "null"
+        }
+      }
+    ],
+    "status": 200
+  },
+  "GET /api/v1/evaluations/runs/{run_id}": {
+    "content_type": "application/json",
+    "shape": {
+      "case_count": "number",
+      "case_results": [
+        {
+          "case_id": "str",
+          "critical_failure": "bool",
+          "error": "null",
+          "estimated_cost": "number",
+          "input_tokens": "number",
+          "latency_ms": "number",
+          "metric_results": "[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]",
+          "output_tokens": "number",
+          "partial": "bool",
+          "passed": "bool",
+          "response": "str",
+          "retrieved_context": "['str']|['str']|['str']|[]|[]|[]|[]|[]"
+        }
+      ],
+      "critical_failure_case_ids": [
+        "str"
+      ],
+      "failed_count": "number",
+      "metrics_by_framework": {
+        "ans-001": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ans-002": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ans-003": {
+          "deterministic": [
+            {
+              "explanation": "str",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ans-004": {
+          "deterministic": [
+            {
+              "explanation": "str",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ans-005": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "neg-001": {
+          "deterministic": [
+            {
+              "explanation": "str",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "neg-002": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "neg-003": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ref-001": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ref-002": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ref-003": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ret-001": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ret-002": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ret-003": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "ret-004": {
+          "deterministic": [
+            {
+              "explanation": "str",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "str-001": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "str-002": {
+          "deterministic": [
+            {
+              "explanation": "str",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "str-003": {
+          "deterministic": [
+            {
+              "explanation": "str",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "uns-001": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "uns-002": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "uns-003": {
+          "deterministic": [
+            {
+              "explanation": "str",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        },
+        "uns-004": {
+          "deterministic": [
+            {
+              "explanation": "null",
+              "framework": "str",
+              "metadata": {},
+              "metric_name": "str",
+              "passed": "bool",
+              "score": "number",
+              "threshold": "number"
+            }
+          ]
+        }
+      },
+      "passed_count": "number",
+      "run": {
+        "completed_at": "str",
+        "dataset_name": "str",
+        "dataset_version": "str",
+        "id": "str",
+        "model": "str",
+        "provider": "str",
+        "started_at": "str",
+        "status": "str",
+        "trace_id": "null"
+      }
+    },
+    "status": 200
+  },
+  "GET /api/v1/evaluations/runs/{run_id} unknown": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "GET /api/v1/gate/baselines": {
+    "content_type": "application/json",
+    "shape": [
+      {
+        "aggregate_metrics": {
+          "citation_presence": "number",
+          "estimated_cost_usd": "number",
+          "exact_match": "number",
+          "expected_refusal": "number",
+          "forbidden_phrases": "number",
+          "json_schema_compliance": "number",
+          "latency_ms": "number",
+          "required_phrases": "number"
+        },
+        "approved_at": "str",
+        "approved_by": "str",
+        "dataset_name": "str",
+        "dataset_version": "str",
+        "id": "str",
+        "notes": "null",
+        "pass_rate": "number",
+        "run_id": "str",
+        "version": "number"
+      }
+    ],
+    "status": 200
+  },
+  "GET /api/v1/gate/compare": {
+    "content_type": "application/json",
+    "shape": {
+      "aggregate_metrics_a": {
+        "citation_presence": "number",
+        "estimated_cost_usd": "number",
+        "exact_match": "number",
+        "expected_refusal": "number",
+        "forbidden_phrases": "number",
+        "json_schema_compliance": "number",
+        "latency_ms": "number",
+        "required_phrases": "number"
+      },
+      "aggregate_metrics_b": {
+        "citation_presence": "number",
+        "estimated_cost_usd": "number",
+        "exact_match": "number",
+        "expected_refusal": "number",
+        "forbidden_phrases": "number",
+        "json_schema_compliance": "number",
+        "latency_ms": "number",
+        "required_phrases": "number"
+      },
+      "metric_deltas": {
+        "citation_presence": "number",
+        "estimated_cost_usd": "number",
+        "exact_match": "number",
+        "expected_refusal": "number",
+        "forbidden_phrases": "number",
+        "json_schema_compliance": "number",
+        "latency_ms": "number",
+        "required_phrases": "number"
+      },
+      "pass_rate_a": "number",
+      "pass_rate_b": "number",
+      "run_a": {
+        "completed_at": "str",
+        "dataset_name": "str",
+        "dataset_version": "str",
+        "id": "str",
+        "model": "str",
+        "provider": "str",
+        "started_at": "str",
+        "status": "str",
+        "trace_id": "null"
+      },
+      "run_b": {
+        "completed_at": "str",
+        "dataset_name": "str",
+        "dataset_version": "str",
+        "id": "str",
+        "model": "str",
+        "provider": "str",
+        "started_at": "str",
+        "status": "str",
+        "trace_id": "null"
+      }
+    },
+    "status": 200
+  },
+  "GET /api/v1/gate/decisions": {
+    "content_type": "application/json",
+    "shape": [
+      {
+        "aggregate_metrics": {
+          "citation_presence": "number",
+          "estimated_cost_usd": "number",
+          "exact_match": "number",
+          "expected_refusal": "number",
+          "forbidden_phrases": "number",
+          "json_schema_compliance": "number",
+          "latency_ms": "number",
+          "required_phrases": "number"
+        },
+        "baseline_version": "number",
+        "created_at": "str",
+        "critical_failures": [
+          "str"
+        ],
+        "dataset_version": "str",
+        "framework_errors": {},
+        "id": "str",
+        "model": "str",
+        "policy_id": "str",
+        "policy_version": "str",
+        "provider": "str",
+        "reasons": [
+          "str"
+        ],
+        "regression_summary": {
+          "baseline_version": "number",
+          "metric_deltas": {
+            "citation_presence": "number",
+            "estimated_cost_usd": "number",
+            "exact_match": "number",
+            "expected_refusal": "number",
+            "forbidden_phrases": "number",
+            "json_schema_compliance": "number",
+            "latency_ms": "number",
+            "required_phrases": "number"
+          },
+          "new_failures": [],
+          "pass_rate_delta": "number",
+          "recovered_failures": []
+        },
+        "run_id": "str",
+        "status": "str",
+        "trace_id": "null"
+      }
+    ],
+    "status": 200
+  },
+  "GET /api/v1/gate/decisions/{decision_id}": {
+    "content_type": "application/json",
+    "shape": {
+      "aggregate_metrics": {
+        "citation_presence": "number",
+        "estimated_cost_usd": "number",
+        "exact_match": "number",
+        "expected_refusal": "number",
+        "forbidden_phrases": "number",
+        "json_schema_compliance": "number",
+        "latency_ms": "number",
+        "required_phrases": "number"
+      },
+      "baseline_version": "number",
+      "created_at": "str",
+      "critical_failures": [
+        "str"
+      ],
+      "dataset_version": "str",
+      "framework_errors": {},
+      "id": "str",
+      "model": "str",
+      "policy_id": "str",
+      "policy_version": "str",
+      "provider": "str",
+      "reasons": [
+        "str"
+      ],
+      "regression_summary": {
+        "baseline_version": "number",
+        "metric_deltas": {
+          "citation_presence": "number",
+          "estimated_cost_usd": "number",
+          "exact_match": "number",
+          "expected_refusal": "number",
+          "forbidden_phrases": "number",
+          "json_schema_compliance": "number",
+          "latency_ms": "number",
+          "required_phrases": "number"
+        },
+        "new_failures": [],
+        "pass_rate_delta": "number",
+        "recovered_failures": []
+      },
+      "run_id": "str",
+      "status": "str",
+      "trace_id": "null"
+    },
+    "status": 200
+  },
+  "GET /api/v1/gate/decisions/{decision_id} unknown": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "GET /api/v1/gate/policies": {
+    "content_type": "application/json",
+    "shape": [
+      {
+        "cost_budget_action": "str",
+        "cost_budget_usd": "null",
+        "created_at": "str",
+        "critical_case_action": "str",
+        "id": "str",
+        "latency_budget_action": "str",
+        "latency_budget_ms": "null",
+        "max_regression_tolerance": "number",
+        "min_pass_rate": "number",
+        "name": "str",
+        "regression_action": "str",
+        "required_metrics": [],
+        "version": "str"
+      }
+    ],
+    "status": 200
+  },
+  "GET /api/v1/gate/policies/active": {
+    "content_type": "application/json",
+    "shape": {
+      "cost_budget_action": "str",
+      "cost_budget_usd": "null",
+      "created_at": "str",
+      "critical_case_action": "str",
+      "id": "str",
+      "latency_budget_action": "str",
+      "latency_budget_ms": "null",
+      "max_regression_tolerance": "number",
+      "min_pass_rate": "number",
+      "name": "str",
+      "regression_action": "str",
+      "required_metrics": [],
+      "version": "str"
+    },
+    "status": 200
+  },
+  "GET /api/v1/gate/policies/active (seeded default)": {
+    "content_type": "application/json",
+    "shape": {
+      "cost_budget_action": "str",
+      "cost_budget_usd": "null",
+      "created_at": "str",
+      "critical_case_action": "str",
+      "id": "str",
+      "latency_budget_action": "str",
+      "latency_budget_ms": "null",
+      "max_regression_tolerance": "number",
+      "min_pass_rate": "number",
+      "name": "str",
+      "regression_action": "str",
+      "required_metrics": [],
+      "version": "str"
+    },
+    "status": 200
+  },
+  "GET /api/v1/gate/policies/{policy_id}": {
+    "content_type": "application/json",
+    "shape": {
+      "cost_budget_action": "str",
+      "cost_budget_usd": "null",
+      "created_at": "str",
+      "critical_case_action": "str",
+      "id": "str",
+      "latency_budget_action": "str",
+      "latency_budget_ms": "null",
+      "max_regression_tolerance": "number",
+      "min_pass_rate": "number",
+      "name": "str",
+      "regression_action": "str",
+      "required_metrics": [],
+      "version": "str"
+    },
+    "status": 200
+  },
+  "GET /api/v1/gate/policies/{policy_id} unknown": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "GET /api/v1/rag/chunks": {
+    "content_type": "application/json",
+    "shape": {
+      "chunk_count": "number",
+      "chunks": [
+        {
+          "chunk_id": "str",
+          "metadata": {
+            "chunk_id": "str",
+            "chunk_index": "number",
+            "source_id": "str",
+            "title": "str"
+          },
+          "relevance_score": "null",
+          "source_id": "str",
+          "text": "str"
+        }
+      ],
+      "query": "null"
+    },
+    "status": 200
+  },
+  "GET /api/v1/rag/chunks?query": {
+    "content_type": "application/json",
+    "shape": {
+      "chunk_count": "number",
+      "chunks": [
+        {
+          "chunk_id": "str",
+          "metadata": {
+            "chunk_id": "str",
+            "chunk_index": "number",
+            "source_id": "str",
+            "title": "str"
+          },
+          "relevance_score": "number",
+          "source_id": "str",
+          "text": "str"
+        }
+      ],
+      "query": "str"
+    },
+    "status": 200
+  },
+  "GET /api/v1/reports/{decision_id}/html": {
+    "content_type": "text/html",
+    "starts_with_html": true,
+    "status": 200
+  },
+  "GET /api/v1/reports/{decision_id}/json": {
+    "content_type": "application/json",
+    "shape": {
+      "aggregate_metrics": {
+        "citation_presence": "number",
+        "estimated_cost_usd": "number",
+        "exact_match": "number",
+        "expected_refusal": "number",
+        "forbidden_phrases": "number",
+        "json_schema_compliance": "number",
+        "latency_ms": "number",
+        "required_phrases": "number"
+      },
+      "baseline_version": "number",
+      "case_results": [
+        {
+          "case_id": "str",
+          "critical_failure": "bool",
+          "error": "null",
+          "estimated_cost": "number",
+          "input_tokens": "number",
+          "latency_ms": "number",
+          "metric_results": "[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'null', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]|[{'explanation': 'str', 'framework': 'str', 'metadata': {}, 'metric_name': 'str', 'passed': 'bool', 'score': 'number', 'threshold': 'number'}]",
+          "output_tokens": "number",
+          "partial": "bool",
+          "passed": "bool",
+          "response": "str",
+          "retrieved_context": "['str']|['str']|['str']|[]|[]|[]|[]|[]"
+        }
+      ],
+      "completed_at": "str",
+      "critical_failures": [
+        "str"
+      ],
+      "dataset_name": "str",
+      "dataset_version": "str",
+      "decision_id": "str",
+      "framework_errors": {},
+      "generated_at": "str",
+      "mean_latency_ms": "number",
+      "model": "str",
+      "pass_rate": "number",
+      "passed_cases": "number",
+      "policy_id": "str",
+      "policy_version": "str",
+      "provider": "str",
+      "reasons": [
+        "str"
+      ],
+      "regression_summary": {
+        "baseline_version": "number",
+        "metric_deltas": {
+          "citation_presence": "number",
+          "estimated_cost_usd": "number",
+          "exact_match": "number",
+          "expected_refusal": "number",
+          "forbidden_phrases": "number",
+          "json_schema_compliance": "number",
+          "latency_ms": "number",
+          "required_phrases": "number"
+        },
+        "new_failures": [],
+        "pass_rate_delta": "number",
+        "recovered_failures": []
+      },
+      "run_id": "str",
+      "started_at": "str",
+      "status": "str",
+      "total_cases": "number",
+      "total_estimated_cost": "number",
+      "total_input_tokens": "number",
+      "total_output_tokens": "number",
+      "trace_id": "null"
+    },
+    "status": 200
+  },
+  "GET /api/v1/reports/{decision_id}/json unknown": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "GET /api/v1/status": {
+    "content_type": "application/json",
+    "shape": {
+      "app_name": "str",
+      "counts": {
+        "evaluation_cases": "number",
+        "evaluation_runs": "number"
+      },
+      "environment": "str",
+      "status": "str",
+      "uptime_seconds": "number",
+      "version": "str"
+    },
+    "status": 200
+  },
+  "GET /health": {
+    "content_type": "application/json",
+    "shape": {
+      "status": "str"
+    },
+    "status": 200
+  },
+  "GET /ready": {
+    "content_type": "application/json",
+    "shape": {
+      "checks": {
+        "datasets": "str",
+        "policy_store": "str",
+        "rag_vector_store": "str"
+      },
+      "status": "str"
+    },
+    "status": 200
+  },
+  "POST /api/v1/evaluations/runs 1.0.0": {
+    "content_type": "application/json",
+    "shape": {
+      "case_count": "number",
+      "critical_failure_case_ids": [
+        "str"
+      ],
+      "failed_count": "number",
+      "passed_count": "number",
+      "run": {
+        "completed_at": "str",
+        "dataset_name": "str",
+        "dataset_version": "str",
+        "id": "str",
+        "model": "str",
+        "provider": "str",
+        "started_at": "str",
+        "status": "str",
+        "trace_id": "null"
+      }
+    },
+    "status": 200
+  },
+  "POST /api/v1/evaluations/runs 1.1.0": {
+    "content_type": "application/json",
+    "shape": {
+      "case_count": "number",
+      "critical_failure_case_ids": [
+        "str"
+      ],
+      "failed_count": "number",
+      "passed_count": "number",
+      "run": {
+        "completed_at": "str",
+        "dataset_name": "str",
+        "dataset_version": "str",
+        "id": "str",
+        "model": "str",
+        "provider": "str",
+        "started_at": "str",
+        "status": "str",
+        "trace_id": "null"
+      }
+    },
+    "status": 200
+  },
+  "POST /api/v1/evaluations/runs invalid body": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 422
+  },
+  "POST /api/v1/evaluations/runs unknown dataset": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "POST /api/v1/gate/baselines": {
+    "content_type": "application/json",
+    "shape": {
+      "aggregate_metrics": {
+        "citation_presence": "number",
+        "estimated_cost_usd": "number",
+        "exact_match": "number",
+        "expected_refusal": "number",
+        "forbidden_phrases": "number",
+        "json_schema_compliance": "number",
+        "latency_ms": "number",
+        "required_phrases": "number"
+      },
+      "approved_at": "str",
+      "approved_by": "str",
+      "dataset_name": "str",
+      "dataset_version": "str",
+      "id": "str",
+      "notes": "null",
+      "pass_rate": "number",
+      "run_id": "str",
+      "version": "number"
+    },
+    "status": 200
+  },
+  "POST /api/v1/gate/baselines unknown run": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "POST /api/v1/gate/decisions": {
+    "content_type": "application/json",
+    "shape": {
+      "aggregate_metrics": {
+        "citation_presence": "number",
+        "estimated_cost_usd": "number",
+        "exact_match": "number",
+        "expected_refusal": "number",
+        "forbidden_phrases": "number",
+        "json_schema_compliance": "number",
+        "latency_ms": "number",
+        "required_phrases": "number"
+      },
+      "baseline_version": "number",
+      "created_at": "str",
+      "critical_failures": [
+        "str"
+      ],
+      "dataset_version": "str",
+      "framework_errors": {},
+      "id": "str",
+      "model": "str",
+      "policy_id": "str",
+      "policy_version": "str",
+      "provider": "str",
+      "reasons": [
+        "str"
+      ],
+      "regression_summary": {
+        "baseline_version": "number",
+        "metric_deltas": {
+          "citation_presence": "number",
+          "estimated_cost_usd": "number",
+          "exact_match": "number",
+          "expected_refusal": "number",
+          "forbidden_phrases": "number",
+          "json_schema_compliance": "number",
+          "latency_ms": "number",
+          "required_phrases": "number"
+        },
+        "new_failures": [],
+        "pass_rate_delta": "number",
+        "recovered_failures": []
+      },
+      "run_id": "str",
+      "status": "str",
+      "trace_id": "null"
+    },
+    "status": 200
+  },
+  "POST /api/v1/gate/decisions unknown run": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 404
+  },
+  "POST /api/v1/gate/policies": {
+    "content_type": "application/json",
+    "shape": {
+      "cost_budget_action": "str",
+      "cost_budget_usd": "null",
+      "created_at": "str",
+      "critical_case_action": "str",
+      "id": "str",
+      "latency_budget_action": "str",
+      "latency_budget_ms": "null",
+      "max_regression_tolerance": "number",
+      "min_pass_rate": "number",
+      "name": "str",
+      "regression_action": "str",
+      "required_metrics": [],
+      "version": "str"
+    },
+    "status": 200
+  },
+  "POST /api/v1/gate/policies invalid body": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 422
+  },
+  "POST /api/v1/rag/evaluate/{case_id}": {
+    "content_type": "application/json",
+    "shape": {
+      "case_result": {
+        "case_id": "str",
+        "critical_failure": "bool",
+        "error": "null",
+        "estimated_cost": "number",
+        "input_tokens": "number",
+        "latency_ms": "number",
+        "metric_results": [
+          {
+            "explanation": "null",
+            "framework": "str",
+            "metadata": {},
+            "metric_name": "str",
+            "passed": "bool",
+            "score": "number",
+            "threshold": "number"
+          }
+        ],
+        "output_tokens": "number",
+        "partial": "bool",
+        "passed": "bool",
+        "response": "str",
+        "retrieved_context": [
+          "str"
+        ]
+      },
+      "metrics_by_framework": {
+        "deterministic": [
+          {
+            "explanation": "null",
+            "framework": "str",
+            "metadata": {},
+            "metric_name": "str",
+            "passed": "bool",
+            "score": "number",
+            "threshold": "number"
+          }
+        ]
+      },
+      "retrieved_chunks": [
+        {
+          "chunk_id": "str",
+          "metadata": {
+            "chunk_id": "str",
+            "chunk_index": "number",
+            "source_id": "str",
+            "title": "str"
+          },
+          "relevance_score": "number",
+          "source_id": "str",
+          "text": "str"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "POST /api/v1/rag/query openai without key": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 400
+  },
+  "POST /api/v1/rag/query without provider": {
+    "content_type": "application/json",
+    "shape": {
+      "error": {
+        "code": "str",
+        "message": "str",
+        "request_id": "str"
+      }
+    },
+    "status": 422
+  }
+}

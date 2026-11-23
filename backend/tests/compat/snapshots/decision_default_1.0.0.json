@@ -1,0 +1,33 @@
+{
+  "aggregate_metrics": {
+    "citation_presence": 0.75,
+    "estimated_cost_usd": 0.015545455,
+    "exact_match": 0.5,
+    "expected_refusal": 0.8,
+    "forbidden_phrases": 0.75,
+    "json_schema_compliance": 0.666666667,
+    "latency_ms": 954.545454545,
+    "required_phrases": 1.0
+  },
+  "baseline_version": null,
+  "created_at": "<volatile>",
+  "critical_failures": [
+    "neg-001",
+    "str-002"
+  ],
+  "dataset_version": "1.0.0",
+  "framework_errors": {},
+  "id": "<volatile>",
+  "model": "fixture-v1",
+  "policy_id": "<volatile>",
+  "policy_version": "1.0.0",
+  "provider": "deterministic",
+  "reasons": [
+    "critical case(s) failed: ['neg-001', 'str-002']",
+    "pass rate 68.18% is below the required minimum 100.00% (15/22 cases passed)"
+  ],
+  "regression_summary": null,
+  "run_id": "<volatile>",
+  "status": "block",
+  "trace_id": null
+}

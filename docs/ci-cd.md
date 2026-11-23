@@ -22,11 +22,11 @@ model APIs for every PR."
 
 ## Deterministic CI (`pr.yml`) — runs on every PR, free
 
-Seven jobs, matching Sprint 11's own list:
+Eight jobs: Sprint 11's seven, plus the backward-compatibility job added for the framework work (M0):
 
 1. **Lint & formatting** — `ruff check`/`ruff format --check` (backend),
    `oxlint`/`tsc -b` (frontend).
-2. **Backend unit tests** — everything under `tests/` except `tests/api/`
+2. **Backend unit tests** — everything under `tests/` except `tests/api/` and `tests/compat/`
    (domain models, every evaluator framework — mocked, no network call —
    the Policy Engine, repositories, RAG pipeline, observability).
 3. **Backend API/integration tests** — `tests/api/`, which drives the
@@ -41,12 +41,18 @@ Seven jobs, matching Sprint 11's own list:
    → download both report formats. This is the one job that exercises the
    *actual deployed shape* of the app rather than pytest's in-process
    client.
-6. **Docker build validation** — builds both images, then runs the exact
+6. **Docker build validation** — builds both images, checks the
+   backward-compatibility API contract against the built **backend
+   container**, replaces the container (same data volume) to confirm
+   policies and baselines survive, then runs the exact
    same `scripts/smoke_test.sh` against the built **backend container**
    (not just `uv run`), and separately confirms the **frontend container**
    serves its static assets and that `docker-entrypoint.sh` correctly
    wrote the injected `API_BASE_URL` into `env-config.js`.
-7. **Coverage** — backend (`pytest-cov`) and frontend
+7. **Backward compatibility** — `tests/compat/` (see "Backward
+   compatibility" below): snapshots of today's gate decisions, evaluator
+   results, API contract, write-access rules and SQLite persistence.
+8. **Coverage** — backend (`pytest-cov`) and frontend
    (`@vitest/coverage-v8`) reports are uploaded as workflow artifacts and
    summarized in the job summary. No hard threshold is enforced yet (see
    "Known limitations" below).
@@ -60,7 +66,7 @@ confirm that yourself before trusting it.
 ```bash
 cd backend
 uv run ruff check . && uv run ruff format --check .
-uv run pytest -q tests --ignore=tests/api --cov=app --cov-report=term-missing
+uv run pytest -q tests --ignore=tests/api --ignore=tests/compat --cov=app --cov-report=term-missing
 uv run pytest -q tests/api --cov=app --cov-report=term-missing
 
 cd ../frontend
@@ -74,10 +80,41 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 &
 bash ../scripts/smoke_test.sh http://127.0.0.1:8000
 kill %1
 
+# backward-compatibility snapshots:
+uv run pytest -q tests/compat
+# the same API contract check against a running server or container:
+AQG_COMPAT_BASE_URL=http://127.0.0.1:8000 uv run pytest -q tests/compat/test_api_contract.py
 # Docker build validation (requires Docker installed locally):
 cd ..
 docker build -t ai-quality-gate-backend:local ./backend
 docker build -t ai-quality-gate-frontend:local ./frontend
+```
+
+## Backward compatibility
+
+`backend/tests/compat/` locks in how the gate behaves today, so later changes
+(the reusable framework work) can prove they changed nothing:
+
+- `test_gate_snapshots.py`: every case's metric results for both bundled
+  dataset versions, and gate decisions under the default policy, a custom
+  policy that uses every setting, and an approved baseline, plus the run
+  comparison and JSON report.
+- `test_api_contract.py`: every route's status code and response shape
+  (keys and types, not values) through a normal workflow and the main error
+  cases, the list of routes, and the write-access (`AQG_API_KEY`) rules.
+- `test_database_workflows.py`: what survives a restart when SQLite uses a
+  real file (policies, baselines, gate decisions) and what doesn't
+  (evaluation runs are in memory); baseline versions keep counting up.
+- `scripts/compat_restart_check.sh`: the same persistence check against a
+  running server or container, used by the Docker job.
+
+Snapshots are in `backend/tests/compat/snapshots/`. Ids, timestamps and other
+per-run values are masked; floats are rounded to 9 places. A missing snapshot
+fails the test instead of being created. If a change is **meant** to alter
+behavior, update the snapshots and explain why in the PR:
+
+```bash
+UPDATE_SNAPSHOTS=1 uv run pytest -q tests/compat
 ```
 
 ## Live evaluation (`live-eval.yml`) — manual only, costs money
