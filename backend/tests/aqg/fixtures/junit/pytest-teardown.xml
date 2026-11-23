@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="2" failures="1" skipped="0" tests="3" time="0.024" timestamp="2026-11-23T01:07:31.352916-08:00" hostname="vm"><testcase classname="sample_teardown" name="test_fail_and_teardown_error" time="0.000"><failure message="assert False">bad_teardown = None
+
+    def test_fail_and_teardown_error(bad_teardown):
+&gt;       assert False  # noqa: B011 (sample test that must fail)
+        ^^^^^^^^^^^^
+E       assert False
+
+sample_teardown.py:13: AssertionError</failure></testcase><testcase classname="sample_teardown" name="test_fail_and_teardown_error" time="0.000"><error message="failed on teardown with &quot;RuntimeError: teardown boom&quot;">@pytest.fixture
+    def bad_teardown():
+        yield
+&gt;       raise RuntimeError("teardown boom")
+E       RuntimeError: teardown boom
+
+sample_teardown.py:9: RuntimeError</error></testcase><testcase classname="sample_teardown" name="test_pass_and_teardown_error" time="0.000"><error message="failed on teardown with &quot;RuntimeError: teardown boom&quot;">@pytest.fixture
+    def bad_teardown():
+        yield
+&gt;       raise RuntimeError("teardown boom")
+E       RuntimeError: teardown boom
+
+sample_teardown.py:9: RuntimeError</error></testcase></testsuite></testsuites>

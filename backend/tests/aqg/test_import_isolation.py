@@ -39,6 +39,8 @@ import json, sys
 import aqg
 import aqg.evidence
 import aqg.evidence.models
+import aqg.importers
+import aqg.importers.junit
 print(json.dumps(sorted(sys.modules)))
 """
 
@@ -58,6 +60,7 @@ def test_importing_aqg_loads_no_heavy_modules():
     )
     loaded = json.loads(result.stdout)
     assert "aqg.evidence.models" in loaded
+    assert "aqg.importers.junit" in loaded
     forbidden = sorted(m for m in loaded if _is_forbidden(m))
     assert forbidden == [], f"import aqg pulled in: {forbidden}"
 

@@ -1,0 +1,101 @@
+<testsuites id="" name="" tests="7" failures="1" skipped="2" errors="1" time="3.0663859999999996">
+<testsuite name="export.spec.ts" timestamp="2026-11-23T08:58:39.301Z" hostname="" tests="7" failures="1" skipped="2" time="0.45" errors="1">
+<testcase name="export › downloads HTML" classname="export.spec.ts" time="0.007">
+</testcase>
+<testcase name="export › keeps code blocks" classname="export.spec.ts" time="0.023">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|test-results/export-export-keeps-code-blocks/error-context.md]]
+
+[[ATTACHMENT|test-results/export-export-keeps-code-blocks-retry1/error-context.md]]
+]]>
+</system-out>
+<failure message="expect(received).toBe(expected) // Object.is equality" type="expect.toBe">
+<![CDATA[  export.spec.ts:9:3 › export › keeps code blocks ──────────────────────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "```ts"
+    Received: "```js"
+
+       8 |
+       9 |   test("keeps code blocks", async () => {
+    > 10 |     expect("```js").toBe("```ts");
+         |                     ^
+      11 |   });
+      12 |
+      13 |   test("passes on retry", async ({}, testInfo) => {
+        at /tmp/fixgen/pw/e2e/export.spec.ts:10:21
+
+    Error Context: ../test-results/export-export-keeps-code-blocks/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "```ts"
+    Received: "```js"
+
+       8 |
+       9 |   test("keeps code blocks", async () => {
+    > 10 |     expect("```js").toBe("```ts");
+         |                     ^
+      11 |   });
+      12 |
+      13 |   test("passes on retry", async ({}, testInfo) => {
+        at /tmp/fixgen/pw/e2e/export.spec.ts:10:21
+
+    Error Context: ../test-results/export-export-keeps-code-blocks-retry1/error-context.md
+]]>
+</failure>
+</testcase>
+<testcase name="export › passes on retry" classname="export.spec.ts" time="0.013">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|test-results/export-export-passes-on-retry/error-context.md]]
+]]>
+</system-out>
+</testcase>
+<testcase name="export › exports PDF" classname="export.spec.ts">
+<properties>
+<property name="skip" value="">
+</property>
+</properties>
+<skipped>
+</skipped>
+</testcase>
+<testcase name="export › reopens ünïcode lab ✓" classname="export.spec.ts" time="0.003">
+</testcase>
+<testcase name="export › times out" classname="export.spec.ts" time="0.404">
+<system-out>
+<![CDATA[
+[[ATTACHMENT|test-results/export-export-times-out/error-context.md]]
+
+[[ATTACHMENT|test-results/export-export-times-out-retry1/error-context.md]]
+]]>
+</system-out>
+<error message="Test timeout of 200ms exceeded." type="Error">
+<![CDATA[  export.spec.ts:23:3 › export › times out ─────────────────────────────────────────────────────────
+
+    Test timeout of 200ms exceeded.
+
+    Error Context: ../test-results/export-export-times-out/error-context.md
+
+    Retry #1 ───────────────────────────────────────────────────────────────────────────────────────
+
+    Test timeout of 200ms exceeded.
+
+    Error Context: ../test-results/export-export-times-out-retry1/error-context.md
+]]>
+</error>
+</testcase>
+<testcase name="converts CLaaT codelab" classname="export.spec.ts">
+<properties>
+<property name="fixme" value="">
+</property>
+</properties>
+<skipped>
+</skipped>
+</testcase>
+</testsuite>
+</testsuites>

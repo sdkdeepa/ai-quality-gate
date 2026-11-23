@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="7" failures="2" errors="0" time="0.017154917">
+    <testsuite name="src/sample.spec.ts" timestamp="2026-11-23T08:58:26.410Z" hostname="vm" tests="7" failures="2" errors="0" skipped="2" time="0.017154917">
+        <testcase classname="src/sample.spec.ts" name="markdown export &gt; renders headings" time="0.003437724">
+        </testcase>
+        <testcase classname="src/sample.spec.ts" name="markdown export &gt; escapes HTML" time="0.008231747">
+            <failure message="expected &apos;&lt;b&gt;&apos; to be &apos;&amp;lt;b&amp;gt;&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;&lt;b&gt;&apos; to be &apos;&amp;lt;b&amp;gt;&apos; // Object.is equality
+
+Expected: &quot;&amp;lt;b&amp;gt;&quot;
+Received: &quot;&lt;b&gt;&quot;
+
+ ❯ src/sample.spec.ts:12:19
+            </failure>
+            <failure message="expected &apos;&lt;b&gt;&apos; to be &apos;&amp;lt;b&amp;gt;&apos; // Object.is equality" type="AssertionError">
+AssertionError: expected &apos;&lt;b&gt;&apos; to be &apos;&amp;lt;b&amp;gt;&apos; // Object.is equality
+
+Expected: &quot;&amp;lt;b&amp;gt;&quot;
+Received: &quot;&lt;b&gt;&quot;
+
+ ❯ src/sample.spec.ts:12:19
+            </failure>
+        </testcase>
+        <testcase classname="src/sample.spec.ts" name="markdown export &gt; supports mermaid diagrams" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="src/sample.spec.ts" name="markdown export &gt; supports footnotes" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="src/sample.spec.ts" name="markdown export &gt; passes on retry" time="0.000997113">
+        </testcase>
+        <testcase classname="src/sample.spec.ts" name="markdown export &gt; handles ünïcode titles ✓" time="0.000785179">
+        </testcase>
+        <testcase classname="src/sample.spec.ts" name="parser &gt; throws while parsing" time="0.001334058">
+            <failure message="cannot read properties of undefined" type="TypeError">
+TypeError: cannot read properties of undefined
+ ❯ src/sample.spec.ts:31:11
+            </failure>
+            <failure message="cannot read properties of undefined" type="TypeError">
+TypeError: cannot read properties of undefined
+ ❯ src/sample.spec.ts:31:11
+            </failure>
+        </testcase>
+    </testsuite>
+</testsuites>
