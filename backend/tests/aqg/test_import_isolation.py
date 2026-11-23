@@ -45,6 +45,7 @@ import aqg.adapters
 import aqg.adapters.llm
 import aqg.policy
 import aqg.policy.decide
+import aqg.baseline
 print(json.dumps(sorted(sys.modules)))
 """
 
@@ -67,6 +68,7 @@ def test_importing_aqg_loads_no_heavy_modules():
     assert "aqg.importers.junit" in loaded
     assert "aqg.adapters.llm" in loaded
     assert "aqg.policy.decide" in loaded
+    assert "aqg.baseline" in loaded
     forbidden = sorted(m for m in loaded if _is_forbidden(m))
     assert forbidden == [], f"import aqg pulled in: {forbidden}"
 
