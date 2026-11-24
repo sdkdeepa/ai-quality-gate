@@ -2,6 +2,14 @@
 
 All notable changes to this project. Versions follow [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed: CI for this repository
+
+- The Docker job builds its images with plain `docker build` again. The GitHub
+  Actions layer cache added in 1.0.0 made the backend image build slower (1m48s
+  against 52s), so it is gone. No change to the package, the CLI or the action.
+
 ## 1.0.0 (2026-11-23)
 
 The first release of the `aqg` quality gate. Install it from GitHub (PyPI comes

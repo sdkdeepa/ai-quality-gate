@@ -402,34 +402,21 @@ jobs:
         run: kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true
 
   # --- 6. Docker build validation ---
-  # Starts at once (it used to wait for lint) and reuses Docker layers from
-  # earlier runs, so the dependency layers rebuild only when uv.lock or
-  # package-lock.json change.
+  # Starts at once (it used to wait for lint). Plain `docker build`: a
+  # GitHub Actions layer cache was tried in PR #28 and made the backend build
+  # slower (1m48s against 52s), because saving the cache costs more than it
+  # saves for this image.
   docker-build:
     name: Docker build validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
-
       - name: Build backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          tags: ai-quality-gate-backend:ci
-          load: true
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+        run: docker build -t ai-quality-gate-backend:ci ./backend
 
       - name: Build frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          tags: ai-quality-gate-frontend:ci
-          load: true
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
+        run: docker build -t ai-quality-gate-frontend:ci ./frontend
 
       # Beyond "does it build": start the actual backend image and run
       # the same deterministic smoke suite against it, so this job also

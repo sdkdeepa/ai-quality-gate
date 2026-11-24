@@ -88,8 +88,9 @@ already tested exactly what lands.
 backend jobs set up their environment with `.github/actions/backend-env`, which
 installs the locked packages with `uv pip install` (every hash checked, as
 `uv sync --frozen` does) instead of `uv sync`, then sets `UV_NO_SYNC=1` so the
-existing `uv run …` commands use it as is. The Docker job starts at once and
-reuses layers from earlier runs through the GitHub Actions cache.
+existing `uv run …` commands use it as is. The Docker job starts at once
+(it doesn't wait for lint) and builds with plain `docker build`: a GitHub
+Actions layer cache made the backend image build slower, not faster.
 
 None of these jobs reference `secrets.AQG_OPENAI_API_KEY` or
 `secrets.AQG_GEMINI_API_KEY` anywhere — grep the file if you want to
