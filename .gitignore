@@ -18,3 +18,7 @@ backend/chroma_store/
 
 # OS
 .DS_Store
+
+# aqg reports and the JUnit XML the CI test jobs write (M8)
+aqg-report/
+backend/test-results/

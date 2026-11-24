@@ -1,0 +1,13 @@
+# Used by the "GitHub Action test" job in pr.yml: with failures, errors, skips
+# and flaky tests ignored, the same reports must PASS (exit 0).
+version: 1
+project: action-test
+inputs:
+  - {type: junit, path: ../junit/pytest.xml, suite: backend}
+  - {type: junit, path: ../junit/vitest.xml, suite: unit}
+  - {type: junit, path: ../junit/playwright.xml, suite: e2e}
+policy:
+  on_optional_failed: ignore
+  on_optional_error: ignore
+  on_optional_skipped: ignore
+  on_flaky: ignore

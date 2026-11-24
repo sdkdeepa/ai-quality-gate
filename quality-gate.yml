@@ -1,0 +1,26 @@
+# The gate checks its own pull requests (M8): the backend test jobs in
+# .github/workflows/pr.yml write JUnit XML, and the "Quality gate (self-check)"
+# job runs this repository's own action (uses: ./) with this file.
+#
+# The live-model smoke tests (marked `smoke`, they need API keys) are left out
+# of those runs with -m "not smoke", so they don't show up as skipped here.
+version: 1
+project: ai-quality-gate
+inputs:
+  - type: junit
+    path: backend/test-results/unit.xml
+    suite: unit
+    min_checks: 800 # 862 at v1.0.0; catches a run that silently collects far fewer tests
+  - type: junit
+    path: backend/test-results/api.xml
+    suite: api
+    min_checks: 70 # 74 at v1.0.0
+  - type: junit
+    path: backend/test-results/compat.xml
+    suite: compat
+    min_checks: 12 # 12 at v1.0.0
+policy:
+  # The M0 backward-compatibility tests must run and pass on every PR.
+  required: ["compat::*"]
+output:
+  dir: aqg-report

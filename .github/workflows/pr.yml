@@ -7,10 +7,12 @@ name: PR Checks
 # workflow to run, and it never incurs cost. The manual, secrets-gated
 # live-provider workflow is a separate file - see .github/workflows/live-eval.yml
 # and docs/ci-cd.md.
+# Runs once per change, on the pull request. There is no second run on push
+# to main: "Require branches to be up to date before merging" (main's branch
+# protection) makes the PR run test exactly what lands. Run it by hand from
+# the Actions tab when needed (workflow_dispatch).
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch: {}
 
 env:
@@ -30,13 +32,14 @@ jobs:
         with:
           version: "0.11.7"
 
-      - name: Backend - ruff check
+      # ruff alone, at the version pinned in uv.lock, without installing the
+      # whole backend environment just to lint it.
+      - name: Backend - ruff check and format --check
         working-directory: backend
-        run: uv run ruff check .
-
-      - name: Backend - ruff format --check
-        working-directory: backend
-        run: uv run ruff format --check .
+        run: |
+          RUFF_VERSION="$(python3 -c 'import tomllib; print(next(p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"] if p["name"] == "ruff"))')"
+          uvx "ruff@${RUFF_VERSION}" check .
+          uvx "ruff@${RUFF_VERSION}" format --check .
 
       - uses: actions/setup-node@v4
         with:
@@ -96,14 +99,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "0.11.7"
-
-      - name: Sync dependencies
-        working-directory: backend
-        run: uv sync --extra all
+      - name: Set up the backend environment
+        uses: ./.github/actions/backend-env
 
       # Everything except tests/api/ - domain models, the evaluator
       # frameworks (deterministic/RAGAS/DeepEval/OpenAI-Evals, all mocked -
@@ -115,8 +112,17 @@ jobs:
       - name: Run unit tests with coverage
         working-directory: backend
         run: |
-          uv run pytest -q tests --ignore=tests/api --ignore=tests/compat \
-            --cov=app --cov-report=term-missing --cov-report=xml:coverage-unit.xml
+          uv run pytest -q -m "not smoke" tests --ignore=tests/api --ignore=tests/compat \
+            --cov=app --cov-report=term-missing --cov-report=xml:coverage-unit.xml \
+            --junitxml=test-results/unit.xml
+
+      - name: Upload JUnit results for the quality gate
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-unit
+          path: backend/test-results/unit.xml
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
@@ -136,18 +142,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "0.11.7"
-
-      - name: Sync dependencies
-        working-directory: backend
-        run: uv sync --extra all
+      - name: Set up the backend environment
+        uses: ./.github/actions/backend-env
 
       - name: Run compatibility tests
         working-directory: backend
-        run: uv run pytest -q tests/compat
+        run: uv run pytest -q tests/compat --junitxml=test-results/compat.xml
+
+      - name: Upload JUnit results for the quality gate
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-compat
+          path: backend/test-results/compat.xml
+          retention-days: 14
 
   # --- 2c. packaging (M7) ---
   # Since M7 the package installs in two ways: the core only (the aqg CLI:
@@ -299,14 +307,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "0.11.7"
-
-      - name: Sync dependencies
-        working-directory: backend
-        run: uv sync --extra all
+      - name: Set up the backend environment
+        uses: ./.github/actions/backend-env
 
       # tests/api/ drives the app exclusively through FastAPI's TestClient
       # (a real ASGI request/response cycle, all routers/middleware/
@@ -316,7 +318,16 @@ jobs:
         working-directory: backend
         run: |
           uv run pytest -q tests/api \
-            --cov=app --cov-report=term-missing --cov-report=xml:coverage-api.xml
+            --cov=app --cov-report=term-missing --cov-report=xml:coverage-api.xml \
+            --junitxml=test-results/api.xml
+
+      - name: Upload JUnit results for the quality gate
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-api
+          path: backend/test-results/api.xml
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
@@ -363,14 +374,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "0.11.7"
-
-      - name: Sync dependencies
-        working-directory: backend
-        run: uv sync --extra all
+      - name: Set up the backend environment
+        uses: ./.github/actions/backend-env
 
       # Deterministic provider only - no AQG_OPENAI_API_KEY/AQG_GEMINI_API_KEY
       # anywhere in this job, so it needs no repository secret and costs
@@ -397,18 +402,34 @@ jobs:
         run: kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true
 
   # --- 6. Docker build validation ---
+  # Starts at once (it used to wait for lint) and reuses Docker layers from
+  # earlier runs, so the dependency layers rebuild only when uv.lock or
+  # package-lock.json change.
   docker-build:
     name: Docker build validation
     runs-on: ubuntu-latest
-    needs: [lint]
     steps:
       - uses: actions/checkout@v4
 
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build backend image
-        run: docker build -t ai-quality-gate-backend:ci ./backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          tags: ai-quality-gate-backend:ci
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
       - name: Build frontend image
-        run: docker build -t ai-quality-gate-frontend:ci ./frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          tags: ai-quality-gate-frontend:ci
+          load: true
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
 
       # Beyond "does it build": start the actual backend image and run
       # the same deterministic smoke suite against it, so this job also
@@ -432,14 +453,8 @@ jobs:
       # M0 compatibility against the real image: the same API contract
       # snapshot as the in-process test, then data persistence when the
       # container is replaced (same named volume, new container).
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "0.11.7"
-
-      - name: Sync dependencies
-        working-directory: backend
-        run: uv sync --extra all
+      - name: Set up the backend environment
+        uses: ./.github/actions/backend-env
 
       - name: API contract against the backend container
         working-directory: backend
@@ -478,6 +493,73 @@ jobs:
         run: |
           docker rm -f backend-ci frontend-ci 2>/dev/null || true
           docker volume rm aqg-ci-data 2>/dev/null || true
+
+  # --- 6b. the gate checks itself (M8) ---
+  # The backend test jobs write JUnit XML; this job runs this repository's
+  # own action on it with quality-gate.yml. It also runs when a test job
+  # failed, so the summary shows what the gate decided and why.
+  quality-gate:
+    name: Quality gate (self-check)
+    runs-on: ubuntu-latest
+    needs: [backend-unit-tests, backend-api-tests, compatibility]
+    if: ${{ !cancelled() }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: backend/test-results
+          merge-multiple: true
+
+      - name: Quality gate
+        uses: ./
+        with:
+          config: quality-gate.yml
+          artifact-name: quality-gate-self-check
+
+  # --- 6c. the action itself (M8) ---
+  # Runs the action on the M2 fixtures: the real reports (with failures)
+  # must BLOCK and fail the step; a lenient policy must PASS.
+  action-test:
+    name: GitHub Action test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Action on reports with failures
+        id: block
+        continue-on-error: true
+        uses: ./
+        with:
+          config: backend/tests/aqg/fixtures/action/blocking.yml
+          artifact-name: action-test-blocking
+
+      - name: Action with a lenient policy
+        id: pass
+        uses: ./
+        with:
+          config: backend/tests/aqg/fixtures/action/passing.yml
+          output: ${{ runner.temp }}/passing-report
+          artifact-name: action-test-passing
+          version: v0.0.0-test
+
+      - name: Check the action's results
+        env:
+          BLOCK_OUTCOME: ${{ steps.block.outcome }}
+          BLOCK_DECISION: ${{ steps.block.outputs.decision }}
+          BLOCK_CODE: ${{ steps.block.outputs.exit-code }}
+          PASS_DECISION: ${{ steps.pass.outputs.decision }}
+          PASS_CODE: ${{ steps.pass.outputs.exit-code }}
+          PASS_DIR: ${{ steps.pass.outputs.report-dir }}
+        run: |
+          test "$BLOCK_OUTCOME" = failure
+          test "$BLOCK_DECISION" = block
+          test "$BLOCK_CODE" = 1
+          test "$PASS_DECISION" = pass
+          test "$PASS_CODE" = 0
+          python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); assert r["run"]["version"] == "v0.0.0-test", r["run"]["version"]' "$PASS_DIR/report.json"
+          echo "action BLOCKs on failures and PASSes under a lenient policy"
 
   # --- 7. coverage ---
   coverage:

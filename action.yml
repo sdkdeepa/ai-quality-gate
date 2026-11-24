@@ -1,0 +1,107 @@
+name: AI Quality Gate
+description: Decide PASS, WARN or BLOCK for a release from JUnit test results (pytest, Vitest, Playwright) and an approved baseline.
+author: Deepa Subramanian
+branding:
+  icon: shield
+  color: green
+
+# Pin this action by tag (sdkdeepa/ai-quality-gate@v1) or, for teams that
+# require it, by full commit SHA. Either way the aqg core is installed from
+# this action's own checkout, so the version you pin is exactly what runs:
+# no second download, and no server, database or AI model.
+#
+# Runs on Linux and macOS runners. The step fails only when `aqg check`
+# fails: BLOCK (exit 1), WARN with fail_on_warn on (exit 1), a config error
+# (exit 2) or an input error (exit 3). The report is uploaded and the run
+# summary written either way.
+
+inputs:
+  config:
+    description: Path to quality-gate.yml, relative to working-directory.
+    default: quality-gate.yml
+  working-directory:
+    description: Folder to run in.
+    default: .
+  version:
+    description: Release version of this run. Default, the tag name when the workflow runs for a tag.
+    default: ""
+  commit:
+    description: Commit of this run. Default, GITHUB_SHA.
+    default: ""
+  output:
+    description: Report folder. Default, output.dir from the config (aqg-report).
+    default: ""
+  upload-report:
+    description: Upload report.json and summary.md as a workflow artifact ("true" or "false").
+    default: "true"
+  artifact-name:
+    description: Name of the uploaded artifact. Must be unique within a workflow run.
+    default: quality-gate-report
+  python-version:
+    description: Python used to run aqg (3.11 or later). It isn't added to the job's PATH.
+    default: "3.12"
+
+outputs:
+  decision:
+    description: pass, warn or block. Empty when there was a config or input error.
+    value: ${{ steps.check.outputs.decision }}
+  exit-code:
+    description: The aqg check exit code (0 pass, 1 block, 2 config error, 3 input error).
+    value: ${{ steps.check.outputs.exit-code }}
+  report-dir:
+    description: Folder with report.json and summary.md. Empty when no report was written.
+    value: ${{ steps.check.outputs.report-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the runner
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        echo "::error::The AI Quality Gate action runs on Linux and macOS runners."
+        exit 1
+
+    # update-environment: false keeps this Python off the job's PATH, so the
+    # action doesn't change the Python the rest of the job uses.
+    - name: Set up Python for aqg
+      id: python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        update-environment: false
+
+    - name: Install aqg from this action's version
+      shell: bash
+      env:
+        PYTHON: ${{ steps.python.outputs.python-path }}
+      run: |
+        "$PYTHON" -m venv "$RUNNER_TEMP/aqg-venv"
+        "$RUNNER_TEMP/aqg-venv/bin/python" -m pip install --quiet --disable-pip-version-check \
+          "$GITHUB_ACTION_PATH/backend"
+        "$RUNNER_TEMP/aqg-venv/bin/aqg" --version
+
+    - name: Run aqg check
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        AQG_CONFIG: ${{ inputs.config }}
+        AQG_VERSION: ${{ inputs.version }}
+        AQG_COMMIT: ${{ inputs.commit }}
+        AQG_OUTPUT: ${{ inputs.output }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/action_check.sh" "$RUNNER_TEMP/aqg-venv/bin"
+
+    - name: Upload the report
+      if: inputs.upload-report == 'true' && steps.check.outputs.report-dir != ''
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.check.outputs.report-dir }}
+        if-no-files-found: ignore
+
+    - name: Pass on the gate's result
+      shell: bash
+      env:
+        CODE: ${{ steps.check.outputs.exit-code }}
+      run: exit "${CODE:-3}"

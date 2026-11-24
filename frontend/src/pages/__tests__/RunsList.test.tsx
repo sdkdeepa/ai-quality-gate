@@ -116,8 +116,12 @@ describe('RunsList', () => {
 
       renderWithRouter()
 
-      await waitFor(() => expect(screen.getByLabelText('Dataset')).toHaveValue('support_bot'))
-      expect(screen.getByLabelText('Version')).toHaveValue('1.0.0')
+      // Both selects fill in after listDatasets resolves; wait for both, not just
+      // the first, or the check can run between the two renders (flaky).
+      await waitFor(() => {
+        expect(screen.getByLabelText('Dataset')).toHaveValue('support_bot')
+        expect(screen.getByLabelText('Version')).toHaveValue('1.0.0')
+      })
     })
 
     it('updates the version options when a different dataset is selected', async () => {
