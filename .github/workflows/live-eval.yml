@@ -45,7 +45,7 @@ jobs:
 
       - name: Sync dependencies
         working-directory: backend
-        run: uv sync
+        run: uv sync --extra all
 
       - name: Validate required secret is present
         run: |

@@ -24,15 +24,20 @@ WORKDIR /app
 
 # Copy only the dependency manifests first so this layer is cached across
 # rebuilds that only change application code, not dependencies.
+#
+# M7: the server's packages are optional extras now (a plain install is the
+# aqg CLI core only), so the image asks for all of them explicitly. Same
+# packages and versions as before the split, from the same uv.lock.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --extra all
 
 # Now copy the actual application and install it into the same venv.
 COPY app ./app
+COPY aqg ./aqg
 COPY datasets ./datasets
 COPY rag_corpus ./rag_corpus
 COPY README.md ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra all
 
 FROM python:3.12-slim AS runtime
 
@@ -52,6 +57,7 @@ WORKDIR /app
 
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/app /app/app
+COPY --from=builder --chown=appuser:appuser /app/aqg /app/aqg
 COPY --from=builder --chown=appuser:appuser /app/datasets /app/datasets
 COPY --from=builder --chown=appuser:appuser /app/rag_corpus /app/rag_corpus
 

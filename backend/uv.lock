@@ -19,12 +19,18 @@ name = "ai-quality-gate"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "jsonschema" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.optional-dependencies]
+all = [
     { name = "arize-phoenix-otel" },
     { name = "chromadb" },
     { name = "deepeval" },
     { name = "fastapi" },
     { name = "google-genai" },
-    { name = "jsonschema" },
     { name = "langchain-chroma" },
     { name = "langchain-community" },
     { name = "langchain-core" },
@@ -32,15 +38,59 @@ dependencies = [
     { name = "langchain-text-splitters" },
     { name = "openai" },
     { name = "openinference-semantic-conventions" },
-    { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyyaml" },
     { name = "ragas" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+deepeval = [
+    { name = "arize-phoenix-otel" },
+    { name = "chromadb" },
+    { name = "deepeval" },
+    { name = "fastapi" },
+    { name = "google-genai" },
+    { name = "langchain-chroma" },
+    { name = "langchain-community" },
+    { name = "langchain-core" },
+    { name = "langchain-text-splitters" },
+    { name = "openai" },
+    { name = "openinference-semantic-conventions" },
+    { name = "pydantic-settings" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+ragas = [
+    { name = "arize-phoenix-otel" },
+    { name = "chromadb" },
+    { name = "fastapi" },
+    { name = "google-genai" },
+    { name = "langchain-chroma" },
+    { name = "langchain-community" },
+    { name = "langchain-core" },
+    { name = "langchain-openai" },
+    { name = "langchain-text-splitters" },
+    { name = "openai" },
+    { name = "openinference-semantic-conventions" },
+    { name = "pydantic-settings" },
+    { name = "ragas" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+server = [
+    { name = "arize-phoenix-otel" },
+    { name = "chromadb" },
+    { name = "fastapi" },
+    { name = "google-genai" },
+    { name = "langchain-chroma" },
+    { name = "langchain-community" },
+    { name = "langchain-core" },
+    { name = "langchain-text-splitters" },
+    { name = "openai" },
+    { name = "openinference-semantic-conventions" },
+    { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "ai-quality-gate", extra = ["all"] },
     { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -49,28 +99,33 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arize-phoenix-otel", specifier = ">=0.17.0,<0.18.0" },
-    { name = "chromadb", specifier = ">=0.5.0" },
-    { name = "deepeval", specifier = ">=4.2.0,<5.0.0" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "google-genai", specifier = ">=1.0.0" },
+    { name = "ai-quality-gate", extras = ["server"], marker = "extra == 'deepeval'" },
+    { name = "ai-quality-gate", extras = ["server"], marker = "extra == 'ragas'" },
+    { name = "ai-quality-gate", extras = ["server", "ragas", "deepeval"], marker = "extra == 'all'" },
+    { name = "arize-phoenix-otel", marker = "extra == 'server'", specifier = ">=0.17.0,<0.18.0" },
+    { name = "chromadb", marker = "extra == 'server'", specifier = ">=0.5.0" },
+    { name = "deepeval", marker = "extra == 'deepeval'", specifier = ">=4.2.0,<5.0.0" },
+    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115.0" },
+    { name = "google-genai", marker = "extra == 'server'", specifier = ">=1.0.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
-    { name = "langchain-chroma", specifier = ">=0.2.0" },
-    { name = "langchain-community", specifier = ">=0.3.31,<0.4.0" },
-    { name = "langchain-core", specifier = ">=0.3.0,<1.0.0" },
-    { name = "langchain-openai", specifier = ">=0.3.0,<0.4.0" },
-    { name = "langchain-text-splitters", specifier = ">=0.3.0" },
-    { name = "openai", specifier = ">=1.54.0" },
-    { name = "openinference-semantic-conventions", specifier = ">=0.1.0,<0.2.0" },
+    { name = "langchain-chroma", marker = "extra == 'server'", specifier = ">=0.2.0" },
+    { name = "langchain-community", marker = "extra == 'server'", specifier = ">=0.3.31,<0.4.0" },
+    { name = "langchain-core", marker = "extra == 'server'", specifier = ">=0.3.0,<1.0.0" },
+    { name = "langchain-openai", marker = "extra == 'ragas'", specifier = ">=0.3.0,<0.4.0" },
+    { name = "langchain-text-splitters", marker = "extra == 'server'", specifier = ">=0.3.0" },
+    { name = "openai", marker = "extra == 'server'", specifier = ">=1.54.0" },
+    { name = "openinference-semantic-conventions", marker = "extra == 'server'", specifier = ">=0.1.0,<0.2.0" },
     { name = "pydantic", specifier = ">=2.9.0" },
-    { name = "pydantic-settings", specifier = ">=2.6.0" },
+    { name = "pydantic-settings", marker = "extra == 'server'", specifier = ">=2.6.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ragas", specifier = ">=0.4.3,<0.5.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
+    { name = "ragas", marker = "extra == 'ragas'", specifier = ">=0.4.3,<0.5.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.32.0" },
 ]
+provides-extras = ["server", "ragas", "deepeval", "all"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "ai-quality-gate", extras = ["all"] },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", specifier = ">=8.3.0" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
