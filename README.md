@@ -64,7 +64,8 @@ ai-quality-gate/
 ├── scripts/smoke_test.sh
 ├── frontend/                # React + TypeScript dashboard
 └── backend/
-    └── app/
+    ├── aqg/                 # the quality-gate core and aqg CLI (no server needed)
+    └── app/                 # the API server
         ├── domain/
         ├── providers/
         ├── evaluation/
@@ -78,6 +79,34 @@ ai-quality-gate/
         ├── api/
         └── core/
 ```
+
+## Install
+
+The package installs in two ways. The **core** is the `aqg` command-line gate: it reads
+JUnit XML from pytest, Vitest and Playwright and decides PASS, WARN or BLOCK, with only
+pydantic, jsonschema and PyYAML as dependencies. The **server** (the API, dashboard
+backend, RAG demo and model-based evaluators) is an optional extra.
+
+```bash
+# The aqg CLI only. The package lives in backend/, hence #subdirectory.
+# Pin a commit (or, once released, a tag) rather than a branch.
+pip install "ai-quality-gate @ git+https://github.com/sdkdeepa/ai-quality-gate@<commit-sha>#subdirectory=backend"
+
+# The server too
+pip install "ai-quality-gate[server] @ git+https://github.com/sdkdeepa/ai-quality-gate@<commit-sha>#subdirectory=backend"
+```
+
+| Extra | Adds |
+|---|---|
+| (none) | the `aqg` CLI: pydantic, jsonschema, PyYAML |
+| `server` | everything the API server needs to start: FastAPI, uvicorn, pydantic-settings, LangChain and Chroma (RAG demo), the OpenAI and Gemini SDKs, OpenTelemetry/Phoenix tracing |
+| `ragas` | RAGAS judge metrics (includes `server`) |
+| `deepeval` | DeepEval judge metrics (includes `server`) |
+| `all` | all of the above |
+
+Importing the server without its extra fails with a message naming the extra to
+install. In a checkout, `uv sync` still installs everything (the dev group includes
+`all`); `uv sync --no-dev` installs the core only. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Run locally
 
@@ -154,7 +183,7 @@ A decision can be exported as JSON or HTML through `/api/v1/reports/{decision_id
 
 The backend uses PyTest; the frontend uses Vitest and React Testing Library. Tests cover domain validation, datasets, provider contracts, evaluator adapters, RAG, policy decisions, reports, observability boundaries, API behavior, security/reliability paths, and the dashboard.
 
-Every PR runs deterministic checks without paid model calls: lint/format, backend tests, API/integration tests, frontend tests, an end-to-end smoke test against a running service, Docker build validation, coverage, and dependency scans. A separate manual workflow can run a controlled live-provider evaluation using repository secrets and uploads reports as artifacts. See [docs/ci-cd.md](docs/ci-cd.md).
+Every PR runs deterministic checks without paid model calls: lint/format, backend tests, API/integration tests, backward-compatibility tests, packaging checks (a core-only install, a full install, and an install from GitHub at the PR's commit), frontend tests, an end-to-end smoke test against a running service, Docker build validation, coverage, and dependency scans. A separate manual workflow can run a controlled live-provider evaluation using repository secrets and uploads reports as artifacts. See [docs/ci-cd.md](docs/ci-cd.md).
 
 ## Observability
 
@@ -185,4 +214,3 @@ See [SECURITY.md](SECURITY.md) for the security boundary and [DECISIONS.md](DECI
 
 ## License
 MIT. See [LICENSE](LICENSE).
-

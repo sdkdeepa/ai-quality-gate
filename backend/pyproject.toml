@@ -4,12 +4,27 @@ version = "0.1.0"
 description = "AI Quality Gate - evaluates LLM/RAG applications before release and returns PASS/WARN/BLOCK decisions."
 readme = "README.md"
 requires-python = ">=3.11"
+# Core: everything the aqg CLI needs, and nothing else. A plain
+# `pip install ai-quality-gate` (or `uv sync --no-dev`) installs only these,
+# so a project can run the gate in CI without FastAPI, LangChain, RAGAS,
+# DeepEval, OpenTelemetry or any AI SDK. (M7; jsonschema is also used by the
+# server's deterministic evaluator.)
 dependencies = [
+    "pydantic>=2.9.0",
+    "jsonschema>=4.26.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Everything the API server needs to start with its default settings: at
+# startup it builds the RAG pipeline (LangChain + Chroma), the OpenAI and
+# Gemini providers, and an OpenTelemetry tracer (a no-op unless Phoenix
+# tracing is turned on). Docker, CI and `uv sync` (through the dev group)
+# install all of it. See CHANGELOG.md (M7).
+server = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
-    "jsonschema>=4.26.0",
     "openai>=1.54.0",
     "google-genai>=1.0.0",
     "langchain-core>=0.3.0,<1.0.0",
@@ -17,6 +32,12 @@ dependencies = [
     "langchain-community>=0.3.31,<0.4.0",
     "langchain-chroma>=0.2.0",
     "chromadb>=0.5.0",
+    "arize-phoenix-otel>=0.17.0,<0.18.0",
+    "openinference-semantic-conventions>=0.1.0,<0.2.0",
+]
+# RAGAS judge metrics (loaded only when AQG_RAGAS_ENABLED is on).
+ragas = [
+    "ai-quality-gate[server]",
     # Sprint 5 (RAGAS integration). Pinned below the 0.4.x line: ragas 0.4.3
     # imports `langchain_community.chat_models.vertexai`, which moved to the
     # `langchain_classic` package in langchain-community>=0.4.0 — that combo
@@ -24,22 +45,25 @@ dependencies = [
     # langchain-core generation. See DECISIONS.md #21.
     "ragas>=0.4.3,<0.5.0",
     "langchain-openai>=0.3.0,<0.4.0",
+]
+# DeepEval judge metrics (loaded only when AQG_DEEPEVAL_ENABLED is on).
+deepeval = [
+    "ai-quality-gate[server]",
     # Sprint 6 (DeepEval integration). Resolved cleanly against the Sprint 5
     # pins above with no further constraints needed — verified via `uv add`
     # + full test suite. See DECISIONS.md #23.
     "deepeval>=4.2.0,<5.0.0",
-    "arize-phoenix-otel>=0.17.0,<0.18.0",
-    "openinference-semantic-conventions>=0.1.0,<0.2.0",
-    # M6: quality-gate.yml for the aqg CLI. Already installed as an indirect
-    # dependency; listed here because aqg imports it directly.
-    "pyyaml>=6.0",
 ]
+all = ["ai-quality-gate[server,ragas,deepeval]"]
 
 [project.scripts]
 aqg = "aqg.cli:main"
 
 [dependency-groups]
+# The dev group installs every extra, so `uv sync` gives a full development
+# environment exactly as before M7. Use `uv sync --no-dev` for the core only.
 dev = [
+    "ai-quality-gate[all]",
     "pytest>=8.3.0",
     "pytest-cov>=6.0.0",
     "httpx>=0.27.0",

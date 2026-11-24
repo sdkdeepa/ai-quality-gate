@@ -22,7 +22,7 @@ model APIs for every PR."
 
 ## Deterministic CI (`pr.yml`) — runs on every PR, free
 
-Eight jobs: Sprint 11's seven, plus the backward-compatibility job added for the framework work (M0):
+Eleven jobs: Sprint 11's seven, the backward-compatibility job (M0), and three packaging jobs (M7):
 
 1. **Lint & formatting** — `ruff check`/`ruff format --check` (backend),
    `oxlint`/`tsc -b` (frontend).
@@ -41,7 +41,8 @@ Eight jobs: Sprint 11's seven, plus the backward-compatibility job added for the
    → download both report formats. This is the one job that exercises the
    *actual deployed shape* of the app rather than pytest's in-process
    client.
-6. **Docker build validation** — builds both images, checks the
+6. **Docker build validation** — builds both images, waits for the backend's
+   health check and checks readiness (`/ready`), checks the
    backward-compatibility API contract against the built **backend
    container**, replaces the container (same data volume) to confirm
    policies and baselines survive, then runs the exact
@@ -52,7 +53,18 @@ Eight jobs: Sprint 11's seven, plus the backward-compatibility job added for the
 7. **Backward compatibility** — `tests/compat/` (see "Backward
    compatibility" below): snapshots of today's gate decisions, evaluator
    results, API contract, write-access rules and SQLite persistence.
-8. **Coverage** — backend (`pytest-cov`) and frontend
+8. **Core-only install** — installs `backend/` into a fresh environment with no
+   extras, confirms that FastAPI, LangChain, Chroma, RAGAS, DeepEval,
+   OpenTelemetry/Phoenix and the AI SDKs are *not* installed, runs the `aqg`
+   tests, runs `aqg check` on the JUnit fixtures (expects BLOCK, exit 1), and
+   checks that importing the server prints which extra to install.
+9. **Full install** — installs `backend[all]` into a fresh environment (held to
+   the versions in `uv.lock`) and runs the full test suite plus every M0
+   compatibility test.
+10. **Install from GitHub** — `pip install "ai-quality-gate @
+    git+https://github.com/<repo>@<the PR's commit>#subdirectory=backend"` into
+    a fresh environment, then `aqg validate` and `aqg check` on a fixture.
+11. **Coverage** — backend (`pytest-cov`) and frontend
    (`@vitest/coverage-v8`) reports are uploaded as workflow artifacts and
    summarized in the job summary. No hard threshold is enforced yet (see
    "Known limitations" below).
@@ -63,8 +75,14 @@ confirm that yourself before trusting it.
 
 ### Running it yourself, locally, before pushing
 
+Since M7 the server's packages are optional extras. `uv sync` in `backend/`
+still installs everything (the dev group includes the `all` extra), and every
+workflow asks for it explicitly with `uv sync --extra all`. The Docker image
+uses `uv sync --no-dev --extra all`.
+
 ```bash
 cd backend
+uv sync
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -q tests --ignore=tests/api --ignore=tests/compat --cov=app --cov-report=term-missing
 uv run pytest -q tests/api --cov=app --cov-report=term-missing
@@ -84,6 +102,13 @@ kill %1
 uv run pytest -q tests/compat
 # the same API contract check against a running server or container:
 AQG_COMPAT_BASE_URL=http://127.0.0.1:8000 uv run pytest -q tests/compat/test_api_contract.py
+# a core-only install, as the Core-only install job does:
+cd ..
+uv venv /tmp/aqg-core && uv pip install --python /tmp/aqg-core/bin/python ./backend
+/tmp/aqg-core/bin/aqg --version
+(cd backend && uv pip install --python /tmp/aqg-core/bin/python pytest \
+  && /tmp/aqg-core/bin/python -m pytest -q tests/aqg --confcutdir=tests/aqg)
+cd backend
 # Docker build validation (requires Docker installed locally):
 cd ..
 docker build -t ai-quality-gate-backend:local ./backend

@@ -103,7 +103,7 @@ jobs:
 
       - name: Sync dependencies
         working-directory: backend
-        run: uv sync
+        run: uv sync --extra all
 
       # Everything except tests/api/ - domain models, the evaluator
       # frameworks (deterministic/RAGAS/DeepEval/OpenAI-Evals, all mocked -
@@ -143,11 +143,154 @@ jobs:
 
       - name: Sync dependencies
         working-directory: backend
-        run: uv sync
+        run: uv sync --extra all
 
       - name: Run compatibility tests
         working-directory: backend
         run: uv run pytest -q tests/compat
+
+  # --- 2c. packaging (M7) ---
+  # Since M7 the package installs in two ways: the core only (the aqg CLI:
+  # pydantic, jsonschema, pyyaml) and with extras (the server). These jobs
+  # install it fresh each way, outside uv sync and the lock-file environment
+  # the jobs above use, the way a user would.
+  core-install:
+    name: Core-only install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      - name: Install the package with no extras
+        run: |
+          uv venv /tmp/aqg-core --python ${{ env.PYTHON_VERSION }}
+          uv pip install --python /tmp/aqg-core/bin/python ./backend
+          uv pip list --python /tmp/aqg-core/bin/python
+
+      - name: No server, RAG, judge, tracing or AI SDK packages are installed
+        run: |
+          /tmp/aqg-core/bin/python - <<'PY'
+          from importlib.util import find_spec
+          heavy = ["fastapi", "starlette", "uvicorn", "langchain_core", "langchain_community",
+                   "chromadb", "ragas", "deepeval", "opentelemetry", "phoenix", "openinference",
+                   "openai", "google.genai"]
+          present = []
+          for name in heavy:
+              try:
+                  if find_spec(name) is not None:
+                      present.append(name)
+              except ModuleNotFoundError:
+                  pass
+          assert not present, f"core-only install contains server packages: {present}"
+          print("no server, RAG, judge, tracing or AI SDK packages installed")
+          PY
+
+      # --confcutdir keeps pytest from loading tests/conftest.py, which
+      # imports the server; tests/aqg/conftest.py leaves out the two test
+      # modules that compare aqg with the server.
+      - name: Run the aqg tests
+        working-directory: backend
+        run: |
+          uv pip install --python /tmp/aqg-core/bin/python "pytest>=8.3.0"
+          /tmp/aqg-core/bin/python -m pytest -q tests/aqg --confcutdir=tests/aqg -p no:cacheprovider
+
+      - name: aqg check on the fixtures gives BLOCK (exit 1)
+        run: |
+          mkdir -p /tmp/aqg-check/reports
+          cp backend/tests/aqg/fixtures/junit/{pytest,vitest,playwright}.xml /tmp/aqg-check/reports/
+          printf '%s\n' \
+            'version: 1' \
+            'project: fixtures' \
+            'inputs:' \
+            '  - {type: junit, path: reports/pytest.xml, suite: backend}' \
+            '  - {type: junit, path: reports/vitest.xml, suite: unit}' \
+            '  - {type: junit, path: reports/playwright.xml, suite: e2e}' \
+            > /tmp/aqg-check/quality-gate.yml
+          set +e
+          /tmp/aqg-core/bin/aqg check --config /tmp/aqg-check/quality-gate.yml
+          code=$?
+          set -e
+          test "$code" = 1 || { echo "expected BLOCK (exit 1), got $code" >&2; exit 1; }
+
+      - name: Importing the server says which extra to install
+        run: |
+          if (cd /tmp && /tmp/aqg-core/bin/python -c "import app" 2>/tmp/app-import.err); then
+            echo "importing the server should fail in a core-only install" >&2
+            exit 1
+          fi
+          cat /tmp/app-import.err
+          grep -q "pip install 'ai-quality-gate\[server\]'" /tmp/app-import.err
+
+  full-install:
+    name: Full install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      # A fresh environment with every extra, installed the way pip would,
+      # held to the versions in uv.lock so this job tests packaging rather
+      # than whatever was released upstream today.
+      - name: Install the package with all extras
+        run: |
+          (cd backend && uv export --frozen --all-extras --no-dev --no-emit-project --no-hashes \
+            --format requirements-txt -o /tmp/aqg-constraints.txt)
+          uv venv /tmp/aqg-full --python ${{ env.PYTHON_VERSION }}
+          uv pip install --python /tmp/aqg-full/bin/python "./backend[all]" -c /tmp/aqg-constraints.txt
+          uv pip install --python /tmp/aqg-full/bin/python "pytest>=8.3.0" "pytest-cov>=6.0.0" "httpx>=0.27.0"
+
+      - name: Full test suite
+        working-directory: backend
+        run: /tmp/aqg-full/bin/python -m pytest -q -p no:cacheprovider
+
+      - name: M0 compatibility tests (gate snapshots, API contract, database workflows)
+        working-directory: backend
+        run: /tmp/aqg-full/bin/python -m pytest -q -p no:cacheprovider tests/compat
+
+  install-from-github:
+    name: Install from GitHub
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.11.7"
+
+      # The commit under test, from the repository it lives in (a fork's,
+      # for a fork PR). The package is in backend/, hence #subdirectory.
+      - name: pip install from git+https at this commit
+        env:
+          SOURCE_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          uv venv /tmp/aqg-git --python ${{ env.PYTHON_VERSION }}
+          uv pip install --python /tmp/aqg-git/bin/python \
+            "ai-quality-gate @ git+https://github.com/${SOURCE_REPO}@${SOURCE_SHA}#subdirectory=backend"
+          /tmp/aqg-git/bin/aqg --version
+
+      - name: The installed aqg validates and checks a project
+        run: |
+          mkdir -p /tmp/aqg-git-check/reports
+          cp backend/tests/aqg/fixtures/junit/vitest.xml /tmp/aqg-git-check/reports/
+          printf '%s\n' \
+            'version: 1' \
+            'project: fixtures' \
+            'inputs:' \
+            '  - {type: junit, path: reports/vitest.xml, suite: unit}' \
+            'policy: {on_optional_failed: ignore, on_optional_skipped: ignore}' \
+            > /tmp/aqg-git-check/quality-gate.yml
+          /tmp/aqg-git/bin/aqg validate --config /tmp/aqg-git-check/quality-gate.yml
+          /tmp/aqg-git/bin/aqg check --config /tmp/aqg-git-check/quality-gate.yml
 
   # --- 3. API / integration tests ---
   backend-api-tests:
@@ -163,7 +306,7 @@ jobs:
 
       - name: Sync dependencies
         working-directory: backend
-        run: uv sync
+        run: uv sync --extra all
 
       # tests/api/ drives the app exclusively through FastAPI's TestClient
       # (a real ASGI request/response cycle, all routers/middleware/
@@ -227,7 +370,7 @@ jobs:
 
       - name: Sync dependencies
         working-directory: backend
-        run: uv sync
+        run: uv sync --extra all
 
       # Deterministic provider only - no AQG_OPENAI_API_KEY/AQG_GEMINI_API_KEY
       # anywhere in this job, so it needs no repository secret and costs
@@ -283,6 +426,9 @@ jobs:
           docker logs backend-ci
           exit 1
 
+      - name: Readiness responds
+        run: curl --fail --silent --show-error http://127.0.0.1:8000/ready
+
       # M0 compatibility against the real image: the same API contract
       # snapshot as the in-process test, then data persistence when the
       # container is replaced (same named volume, new container).
@@ -293,7 +439,7 @@ jobs:
 
       - name: Sync dependencies
         working-directory: backend
-        run: uv sync
+        run: uv sync --extra all
 
       - name: API contract against the backend container
         working-directory: backend
