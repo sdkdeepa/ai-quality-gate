@@ -22,7 +22,8 @@ model APIs for every PR."
 
 ## Deterministic CI (`pr.yml`) — runs on every PR, free
 
-Eleven jobs: Sprint 11's seven, the backward-compatibility job (M0), and three packaging jobs (M7):
+Thirteen jobs: Sprint 11's seven, the backward-compatibility job (M0), three packaging jobs (M7),
+and two for the GitHub Action (M8):
 
 1. **Lint & formatting** — `ruff check`/`ruff format --check` (backend),
    `oxlint`/`tsc -b` (frontend).
@@ -64,10 +65,31 @@ Eleven jobs: Sprint 11's seven, the backward-compatibility job (M0), and three p
 10. **Install from GitHub** — `pip install "ai-quality-gate @
     git+https://github.com/<repo>@<the PR's commit>#subdirectory=backend"` into
     a fresh environment, then `aqg validate` and `aqg check` on a fixture.
-11. **Coverage** — backend (`pytest-cov`) and frontend
+11. **Quality gate (self-check)** — the backend unit, API and compatibility jobs
+    write JUnit XML (the live-model `smoke` tests are left out with
+    `-m "not smoke"`); this job runs the repository's own action (`uses: ./`)
+    on it with the root `quality-gate.yml`. Compatibility tests are required, and
+    each input has a `min_checks` floor. It runs even when a test job failed, so
+    the run summary shows the gate's decision.
+12. **GitHub Action test** — runs the action on the M2 JUnit fixtures: with the
+    default policy it must BLOCK and fail its step; with a lenient policy it must
+    PASS, and the `version` input must reach the report.
+13. **Coverage** — backend (`pytest-cov`) and frontend
    (`@vitest/coverage-v8`) reports are uploaded as workflow artifacts and
    summarized in the job summary. No hard threshold is enforced yet (see
    "Known limitations" below).
+
+**When it runs.** On every pull request (and by hand from the Actions tab), but
+not again on the push to `main` after a merge: `main`'s branch protection has
+"Require branches to be up to date before merging" turned on, so the PR run
+already tested exactly what lands.
+
+**Keeping it fast.** Lint runs ruff alone, at the version in `uv.lock`. The
+backend jobs set up their environment with `.github/actions/backend-env`, which
+installs the locked packages with `uv pip install` (every hash checked, as
+`uv sync --frozen` does) instead of `uv sync`, then sets `UV_NO_SYNC=1` so the
+existing `uv run …` commands use it as is. The Docker job starts at once and
+reuses layers from earlier runs through the GitHub Actions cache.
 
 None of these jobs reference `secrets.AQG_OPENAI_API_KEY` or
 `secrets.AQG_GEMINI_API_KEY` anywhere — grep the file if you want to
@@ -76,8 +98,8 @@ confirm that yourself before trusting it.
 ### Running it yourself, locally, before pushing
 
 Since M7 the server's packages are optional extras. `uv sync` in `backend/`
-still installs everything (the dev group includes the `all` extra), and every
-workflow asks for it explicitly with `uv sync --extra all`. The Docker image
+still installs everything (the dev group includes the `all` extra), and the
+backend CI jobs install every extra (see "Keeping it fast" above). The Docker image
 uses `uv sync --no-dev --extra all`.
 
 ```bash

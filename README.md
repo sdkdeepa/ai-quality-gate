@@ -108,6 +108,33 @@ Importing the server without its extra fails with a message naming the extra to
 install. In a checkout, `uv sync` still installs everything (the dev group includes
 `all`); `uv sync --no-dev` installs the core only. See [CHANGELOG.md](CHANGELOG.md).
 
+## Use it in GitHub Actions
+
+Add a `quality-gate.yml` to your repository (see [backend/aqg/config.py](backend/aqg/config.py)
+for every setting), make your test runners write JUnit XML, and add a step after your tests:
+
+```yaml
+- name: Quality gate
+  if: ${{ !cancelled() }}            # decide even when a test step failed
+  uses: sdkdeepa/ai-quality-gate@v1
+  with:
+    config: quality-gate.yml         # the default
+```
+
+To pin an exact version, use the full commit SHA of a release instead of the tag:
+
+```yaml
+  uses: sdkdeepa/ai-quality-gate@<40-character commit sha> # v1.0.0
+```
+
+The action installs the `aqg` core from its own version (no server, database or AI model),
+runs `aqg check`, uploads `report.json` and `summary.md` as a workflow artifact, writes the
+run summary, and fails the step on BLOCK, on WARN when `fail_on_warn` is on, or on a config
+or input error. It runs on Linux and macOS runners. Inputs: `config`, `working-directory`,
+`version`, `commit`, `output`, `upload-report`, `artifact-name` (must be unique in a run),
+`python-version`. Outputs: `decision`, `exit-code`, `report-dir`. This repository's own pull
+requests are checked by this action (see `quality-gate.yml` at the root).
+
 ## Run locally
 
 With Docker:
@@ -183,7 +210,7 @@ A decision can be exported as JSON or HTML through `/api/v1/reports/{decision_id
 
 The backend uses PyTest; the frontend uses Vitest and React Testing Library. Tests cover domain validation, datasets, provider contracts, evaluator adapters, RAG, policy decisions, reports, observability boundaries, API behavior, security/reliability paths, and the dashboard.
 
-Every PR runs deterministic checks without paid model calls: lint/format, backend tests, API/integration tests, backward-compatibility tests, packaging checks (a core-only install, a full install, and an install from GitHub at the PR's commit), frontend tests, an end-to-end smoke test against a running service, Docker build validation, coverage, and dependency scans. A separate manual workflow can run a controlled live-provider evaluation using repository secrets and uploads reports as artifacts. See [docs/ci-cd.md](docs/ci-cd.md).
+Every PR runs deterministic checks without paid model calls: lint/format, backend tests, API/integration tests, backward-compatibility tests, packaging checks (a core-only install, a full install, and an install from GitHub at the PR's commit), frontend tests, an end-to-end smoke test against a running service, Docker build validation, the quality gate on its own test results, a test of the GitHub Action, coverage, and dependency scans. The checks run once per pull request, not again after merging. A separate manual workflow can run a controlled live-provider evaluation using repository secrets and uploads reports as artifacts. See [docs/ci-cd.md](docs/ci-cd.md).
 
 ## Observability
 

@@ -1,0 +1,8 @@
+# Used by the "GitHub Action test" job in pr.yml: the real M2 reports contain
+# failures and errors, so the default policy must BLOCK (exit 1).
+version: 1
+project: action-test
+inputs:
+  - {type: junit, path: ../junit/pytest.xml, suite: backend}
+  - {type: junit, path: ../junit/vitest.xml, suite: unit}
+  - {type: junit, path: ../junit/playwright.xml, suite: e2e}

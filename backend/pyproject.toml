@@ -1,6 +1,6 @@
 [project]
 name = "ai-quality-gate"
-version = "0.1.0"
+version = "1.0.0"
 description = "AI Quality Gate - evaluates LLM/RAG applications before release and returns PASS/WARN/BLOCK decisions."
 readme = "README.md"
 requires-python = ">=3.11"
